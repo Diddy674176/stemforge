@@ -1,7 +1,15 @@
 32Array(n);
+  const vocL = new Float32Array(n);
+  const vocR = new Float32Array(n);
   let lp = 0;
   let lpR = 0;
   const a = 0.02;
+  // ~150Hz HP on center for vocals; stronger center duck on instrumental
+  const hpCoeff = Math.exp((-2 * Math.PI * 150) / buffer.sampleRate);
+  let prevMidL = 0;
+  let prevMidR = 0;
+  let prevVocL = 0;
+  let prevVocR = 0;
   for (let i = 0; i < n; i++) {
     lp = lp + a * (L[i] - lp);
     lpR = lpR + a * (R[i] - lpR);
@@ -11,27 +19,58 @@
     const hpR = R[i] - lpR;
     drumsL[i] = hp * 0.6 + sideL[i] * 0.4;
     drumsR[i] = hpR * 0.6 + sideR[i] * 0.4;
+    // Center vocal with light HP (~150Hz)
+    const yL = hpCoeff * (prevVocL + midL[i] - prevMidL);
+    const yR = hpCoeff * (prevVocR + midR[i] - prevMidR);
+    vocL[i] = yL;
+    vocR[i] = yR;
+    prevMidL = midL[i];
+    prevMidR = midR[i];
+    prevVocL = yL;
+    prevVocR = yR;
   }
-  const voc = channelsToBuffer(ctx, midL, midR, buffer.sampleRate);
+  // Mild presence lift ~3k via crude mid extract
+  const presence = 0.18;
+  let midLpL = 0;
+  let midLpR = 0;
+  const midA = Math.exp((-2 * Math.PI * 3000) / buffer.sampleRate);
+  for (let i = 0; i < n; i++) {
+    midLpL = midLpL + (1 - midA) * (vocL[i] - midLpL);
+    midLpR = midLpR + (1 - midA) * (vocR[i] - midLpR);
+    const bandL = vocL[i] - midLpL;
+    const bandR = vocR[i] - midLpR;
+    vocL[i] += bandL * presence;
+    vocR[i] += bandR * presence;
+  }
+  const DUCK = 0.92; // stronger than 0.85 — shed vocal bleed from beat bed
+  const instL = new Float32Array(n);
+  const instR = new Float32Array(n);
+  let scoopLpL = 0;
+  let scoopLpR = 0;
+  const scoopA = Math.exp((-2 * Math.PI * 2200) / buffer.sampleRate);
+  for (let i = 0; i < n; i++) {
+    let iL = L[i] - midL[i] * DUCK;
+    let iR = R[i] - midR[i] * DUCK;
+    scoopLpL = scoopLpL + (1 - scoopA) * (iL - scoopLpL);
+    scoopLpR = scoopLpR + (1 - scoopA) * (iR - scoopLpR);
+    // Mild mid scoop so vocals sit on top
+    instL[i] = iL - (iL - scoopLpL) * 0.2;
+    instR[i] = iR - (iR - scoopLpR) * 0.2;
+  }
+  const voc = channelsToBuffer(ctx, vocL, vocR, buffer.sampleRate);
   const drm = channelsToBuffer(ctx, drumsL, drumsR, buffer.sampleRate);
   const bas = channelsToBuffer(ctx, bassL, bassR, buffer.sampleRate);
   const oth = channelsToBuffer(ctx, sideL, sideR, buffer.sampleRate);
-  const mono = mixdownMono(L, R);
+  const mono = mixdownMono(instL, instR);
   return [
-    makeStem(sourceId, 'vocals', voc, computePeaks(mixdownMono(midL, midR))),
+    makeStem(sourceId, 'vocals', voc, computePeaks(mixdownMono(vocL, vocR))),
     makeStem(sourceId, 'drums', drm, computePeaks(mixdownMono(drumsL, drumsR))),
     makeStem(sourceId, 'bass', bas, computePeaks(mixdownMono(bassL, bassR))),
     makeStem(sourceId, 'other', oth, computePeaks(mixdownMono(sideL, sideR))),
     makeStem(
       sourceId,
       'instrumental',
-      channelsToBuffer(
-        ctx,
-        // Duck center more aggressively so beat bed sheds vocal bleed
-        Float32Array.from(L, (_, i) => L[i] - midL[i] * 0.85),
-        Float32Array.from(R, (_, i) => R[i] - midR[i] * 0.85),
-        buffer.sampleRate,
-      ),
+      channelsToBuffer(ctx, instL, instR, buffer.sampleRate),
       computePeaks(mono),
     ),
   ];
