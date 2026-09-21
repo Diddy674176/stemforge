@@ -1,0 +1,140 @@
+/* StemForge Simple mode — beginner-first */
+.studio.mode-simple { grid-template-rows: auto 1fr; }
+
+.btn-tap { min-height: var(--tap, 44px); padding: 10px 14px; }
+.btn-lg { min-height: 48px; padding: 12px 18px; font-size: 15px; }
+.btn-xl { min-height: 56px; padding: 14px 22px; font-size: 17px; border-radius: 12px; }
+
+.project-bar {
+  display: flex; gap: 12px; align-items: center; justify-content: space-between;
+  padding: 12px 16px; border-bottom: 1px solid var(--border); background: #0e121a; flex-wrap: wrap;
+}
+.project-bar-brand { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.project-bar-brand strong { font-size: 15px; letter-spacing: 0.02em; }
+.project-name, .project-bar input[type="text"] {
+  background: var(--panel2); border: 1px solid var(--border); border-radius: 10px;
+  padding: 10px 12px; min-width: 160px; min-height: var(--tap, 44px); color: var(--text);
+}
+.project-bar-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.project-bar select {
+  background: var(--panel2); border: 1px solid var(--border); border-radius: 10px;
+  padding: 10px 12px; min-height: var(--tap, 44px); color: var(--text);
+}
+
+.rights-banner {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.78);
+  display: flex; align-items: center; justify-content: center; z-index: 50; padding: 20px;
+}
+.rights-card {
+  max-width: 440px; width: 100%; background: var(--panel); border: 1px solid var(--border);
+  border-radius: 18px; padding: 28px; box-shadow: 0 24px 64px rgba(0,0,0,0.45);
+}
+.rights-card h1 { margin: 0 0 12px; font-size: 24px; }
+.rights-card p { margin: 0 0 12px; line-height: 1.5; }
+.rights-card .btn { margin-top: 8px; width: 100%; }
+
+.simple-studio {
+  display: flex; flex-direction: column; gap: 16px;
+  padding: 16px 18px 24px; overflow: auto; min-height: 0;
+  max-width: 920px; width: 100%; margin: 0 auto;
+}
+.step-strip {
+  list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px;
+}
+.step-strip li {
+  display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 999px;
+  background: var(--panel); border: 1px solid var(--border); color: var(--muted); font-size: 13px;
+}
+.step-strip li.active {
+  color: var(--text); border-color: var(--accent); background: rgba(124,156,255,0.12);
+}
+.step-strip li.done { color: var(--ok); border-color: rgba(94,234,212,0.35); }
+.step-num {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; border-radius: 50%;
+  background: var(--panel2); font-size: 12px; font-weight: 700;
+}
+.step-strip li.active .step-num { background: var(--accent); color: #fff; }
+
+.status-banner {
+  padding: 14px 16px; border-radius: 14px;
+  background: var(--panel); border: 1px solid var(--border); font-size: 15px; line-height: 1.4;
+}
+.status-busy { color: var(--accent); font-weight: 600; }
+
+.dropzone {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  text-align: center; gap: 12px; min-height: 280px; padding: 32px 20px;
+  border: 2px dashed var(--border); border-radius: 20px;
+  background: linear-gradient(180deg, rgba(124,156,255,0.06), transparent);
+  transition: border-color 0.15s, background 0.15s;
+}
+.dropzone.dragging { border-color: var(--accent); background: rgba(124,156,255,0.12); }
+.dropzone h2 { margin: 0; font-size: 28px; }
+.dropzone-icon { font-size: 42px; opacity: 0.85; }
+
+.source-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px;
+}
+.source-card-simple {
+  text-align: left; padding: 14px; border-radius: 14px;
+  background: var(--panel); border: 1px solid var(--border);
+  color: inherit; display: flex; flex-direction: column; gap: 6px; min-height: 110px;
+}
+.source-card-simple.selected, .source-card-simple:hover { border-color: var(--accent); }
+.source-card-simple.add-more {
+  align-items: center; justify-content: center; color: var(--muted); font-weight: 600; cursor: pointer;
+}
+.stem-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.stem-chip {
+  font-size: 11px; padding: 4px 8px; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--panel2); cursor: pointer; color: inherit;
+}
+.stem-chip.on { background: rgba(124,156,255,0.2); }
+
+.sync-panel {
+  padding: 16px; border-radius: 14px; background: var(--panel);
+  border: 1px solid var(--border); display: flex; flex-direction: column; gap: 14px;
+}
+.sync-fields {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px;
+}
+.sync-fields label {
+  display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--muted);
+}
+.sync-fields select {
+  background: var(--panel2); border: 1px solid var(--border); border-radius: 10px;
+  padding: 12px; min-height: var(--tap, 44px); color: var(--text);
+}
+.sync-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.sync-actions .btn-xl { flex: 1 1 200px; }
+.proposal-list { display: flex; flex-direction: column; gap: 8px; }
+
+.quick-stem {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 14px;
+  padding: 14px 16px; border-radius: 14px; background: var(--panel); border: 1px solid var(--border);
+}
+.quick-stem-head { display: flex; align-items: center; gap: 8px; min-width: 120px; }
+.quick-vol {
+  display: flex; align-items: center; gap: 10px;
+  flex: 1; min-width: 160px; color: var(--muted); font-size: 13px;
+}
+.quick-vol input[type="range"] { flex: 1; accent-color: var(--accent); }
+
+.simple-transport {
+  margin-top: auto; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+  gap: 14px; padding: 16px; border-radius: 14px; background: var(--panel);
+  border: 1px solid var(--border); position: sticky; bottom: 8px;
+}
+.transport-btns { display: flex; gap: 10px; }
+.transport-btn { min-width: 120px; }
+.simple-transport .time { font-size: 16px; }
+
+@media (max-width: 640px) {
+  .project-bar { padding: 10px 12px; }
+  .simple-studio { padding: 12px; }
+  .dropzone h2 { font-size: 22px; }
+  .step-label { display: none; }
+  .step-strip li.active .step-label { display: inline; }
+  .transport-btn { min-width: 96px; }
+}
