@@ -10,8 +10,10 @@ createRoot(document.getElementById('root')!).render(
   </StrictMode>,
 );
 
-if ('serviceWorker' in navigator) {
-  import('virtual:pwa-register').then(({ registerSW }) => {
-    registerSW({ immediate: true });
-  }).catch(() => undefined);
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  void import('virtual:pwa-register')
+    .then(({ registerSW }) => {
+      registerSW({ immediate: true });
+    })
+    .catch(() => undefined);
 }
