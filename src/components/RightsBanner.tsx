@@ -6,22 +6,16 @@ export function RightsBanner({ onAccept }: Props) {
   return (
     <div className="rights-banner" role="dialog" aria-modal="true">
       <div className="rights-card">
-        <h1>StemForge — Rights notice</h1>
+        <h1>StemForge</h1>
         <p>
-          Only import audio <strong>you own</strong> or have explicit permission to remix.
-          StemForge never downloads music, bypasses DRM, scrapes catalogs, or clones artist voices.
+          Only import audio you own or have permission to remix. Everything stays in your
+          browser — no uploads, no DRM bypass, no voice cloning.
         </p>
-        <p>
-          Processing stays in your browser (IndexedDB). Exporting a remix does not grant you
-          rights you did not already have.
+        <p className="muted">
+          Exporting a mix does not grant rights you did not already have.
         </p>
-        <ul>
-          <li>No unauthorized commercial use of others&apos; recordings</li>
-          <li>No DRM circumvention</li>
-          <li>Privacy-local: audio does not leave this device</li>
-        </ul>
-        <button type="button" className="btn primary" onClick={onAccept}>
-          I have rights — Continue
+        <button type="button" className="btn primary btn-lg" onClick={onAccept}>
+          Accept
         </button>
       </div>
     </div>

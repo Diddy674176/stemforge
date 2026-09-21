@@ -51,7 +51,7 @@ export function BeginnerMode(props: Props) {
         disabled={props.busy || !props.vocalsId || !props.beatId}
         onClick={props.onAutoSync}
       >
-        AUTO SYNC preview
+        Auto Sync
       </button>
     </div>
   );
