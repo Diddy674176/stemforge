@@ -1,7 +1,4 @@
-ject]);
-
-  const loadSaved = useCallback(async (id: string) => {
-    setBusy(true);
+e);
     setStatus('Loading project…');
     try {
       const data = await loadProject(id);
