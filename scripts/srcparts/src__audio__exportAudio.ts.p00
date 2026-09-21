@@ -1,0 +1,159 @@
+import { Mp3Encoder } from 'lamejs';
+import type { MasterSettings, TimelineClip, StemTrack } from './types';
+import { createReverbIR } from './reverbIR';
+import { dbToGain, clamp } from './dsp';
+
+export type ExportFormat = 'wav' | 'mp3';
+
+function writeWav(buffer: AudioBuffer): Blob {
+  const numCh = buffer.numberOfChannels;
+  const sampleRate = buffer.sampleRate;
+  const samples = buffer.length;
+  const blockAlign = numCh * 2;
+  const dataSize = samples * blockAlign;
+  const ab = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(ab);
+  const writeStr = (o: number, s: string) => {
+    for (let i = 0; i < s.length; i++) view.setUint8(o + i, s.charCodeAt(i));
+  };
+  writeStr(0, 'RIFF');
+  view.setUint32(4, 36 + dataSize, true);
+  writeStr(8, 'WAVE');
+  writeStr(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, numCh, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * blockAlign, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, 16, true);
+  writeStr(36, 'data');
+  view.setUint32(40, dataSize, true);
+  const channels: Float32Array[] = [];
+  for (let c = 0; c < numCh; c++) channels.push(buffer.getChannelData(c));
+  let offset = 44;
+  for (let i = 0; i < samples; i++) {
+    for (let c = 0; c < numCh; c++) {
+      const s = clamp(channels[c][i], -1, 1);
+      view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+      offset += 2;
+    }
+  }
+  return new Blob([ab], { type: 'audio/wav' });
+}
+
+async function encodeMp3(buffer: AudioBuffer, bitrate = 192): Promise<Blob> {
+  const numCh = buffer.numberOfChannels;
+  const sampleRate = buffer.sampleRate;
+  const left = buffer.getChannelData(0);
+  const right = numCh > 1 ? buffer.getChannelData(1) : left;
+  const encoder = new Mp3Encoder(2, sampleRate, bitrate);
+  const block = 1152;
+  const parts: Int8Array[] = [];
+  const l = new Int16Array(block);
+  const r = new Int16Array(block);
+  for (let i = 0; i < left.length; i += block) {
+    for (let j = 0; j < block; j++) {
+      const idx = i + j;
+      const ls = idx < left.length ? clamp(left[idx], -1, 1) : 0;
+      const rs = idx < right.length ? clamp(right[idx], -1, 1) : 0;
+      l[j] = ls < 0 ? ls * 0x8000 : ls * 0x7fff;
+      r[j] = rs < 0 ? rs * 0x8000 : rs * 0x7fff;
+    }
+    const mp3 = encoder.encodeBuffer(l, r);
+    if (mp3.length) parts.push(mp3);
+  }
+  const end = encoder.flush();
+  if (end.length) parts.push(end);
+  return new Blob(parts as unknown as BlobPart[], { type: 'audio/mpeg' });
+}
+
+function applyMasterGraph(
+  ctx: OfflineAudioContext,
+  input: AudioNode,
+  master: MasterSettings,
+): AudioNode {
+  let node: AudioNode = input;
+  const gain = ctx.createGain();
+  gain.gain.value = dbToGain(master.gainDb);
+  node.connect(gain);
+  node = gain;
+
+  if (master.warmth > 0.01) {
+    const low = ctx.createBiquadFilter();
+    low.type = 'lowshelf';
+    low.frequency.value = 180;
+    low.gain.value = master.warmth * 4;
+    node.connect(low);
+    node = low;
+  }
+  if (master.brightness > 0.01) {
+    const hi = ctx.createBiquadFilter();
+    hi.type = 'highshelf';
+    hi.frequency.value = 6000;
+    hi.gain.value = master.brightness * 4;
+    node.connect(hi);
+    node = hi;
+  }
+
+  if (master.compressor) {
+    const comp = ctx.createDynamicsCompressor();
+    const preset = master.preset;
+    comp.threshold.value = preset === 'loud' ? -18 : preset === 'streaming' ? -14 : -22;
+    comp.ratio.value = preset === 'loud' ? 6 : 3;
+    comp.attack.value = 0.01;
+    comp.release.value = 0.2;
+    node.connect(comp);
+    node = comp;
+  }
+
+  if (master.stereoWidth !== 1) {
+    const split = ctx.createChannelSplitter(2);
+    const merge = ctx.createChannelMerger(2);
+    const mid = ctx.createGain();
+    const side = ctx.createGain();
+    mid.gain.value = 1;
+    side.gain.value = master.stereoWidth;
+    node.connect(split);
+    // simplistic width
+    split.connect(mid, 0);
+    split.connect(side, 1);
+    mid.connect(merge, 0, 0);
+    side.connect(merge, 0, 1);
+    node = merge;
+  }
+
+  if (master.limiter) {
+    const lim = ctx.createDynamicsCompressor();
+    lim.threshold.value = -1.5;
+    lim.knee.value = 0;
+    lim.ratio.value = 20;
+    lim.attack.value = 0.002;
+    lim.release.value = 0.05;
+    node.connect(lim);
+    node = lim;
+  }
+
+  return node;
+}
+
+export interface MixRenderInput {
+  sampleRate: number;
+  durationSec: number;
+  clips: TimelineClip[];
+  stemsById: Map<string, StemTrack>;
+  master: MasterSettings;
+  onProgress?: (p: number) => void;
+}
+
+/** Offline render of timeline mix. */
+export async function renderMix(input: MixRenderInput): Promise<AudioBuffer> {
+  const { sampleRate, durationSec, clips, stemsById, master, onProgress } = input;
+  const length = Math.max(1, Math.ceil(durationSec * sampleRate));
+  const ctx = new OfflineAudioContext(2, length, sampleRate);
+  const masterIn = ctx.createGain();
+  masterIn.gain.value = 1;
+
+  for (const clip of clips) {
+    if (clip.muted) continue;
+    const stem = st

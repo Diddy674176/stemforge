@@ -1,0 +1,82 @@
+emsById.get(clip.stemId);
+    if (!stem?.buffer) continue;
+    const src = ctx.createBufferSource();
+    src.buffer = stem.buffer;
+    // Approximate pitch/tempo via playbackRate (export path). Live engine uses SoundTouch.
+    const rate = clamp(clip.rate * Math.pow(2, clip.pitchSemitones / 12), 0.25, 4);
+    src.playbackRate.value = rate;
+
+    const g = ctx.createGain();
+    g.gain.value = clip.gain * (stem.muted ? 0 : dbToGain(stem.gainDb) * stem.volume);
+    const pan = ctx.createStereoPanner();
+    pan.pan.value = stem.pan;
+
+    const fadeIn = Math.max(0.005, clip.fadeInSec);
+    const fadeOut = Math.max(0.005, clip.fadeOutSec);
+    const t0 = clip.startSec;
+    const t1 = clip.startSec + clip.durationSec;
+    g.gain.setValueAtTime(0, t0);
+    g.gain.linearRampToValueAtTime(g.gain.value || 0.001, t0 + fadeIn);
+    g.gain.setValueAtTime(g.gain.value, Math.max(t0 + fadeIn, t1 - fadeOut));
+    g.gain.linearRampToValueAtTime(0, t1);
+
+    src.connect(g);
+    g.connect(pan);
+    pan.connect(masterIn);
+    const when = Math.max(0, clip.startSec);
+    const offset = Math.max(0, clip.offsetSec);
+    const dur = clip.durationSec * rate;
+    try {
+      src.start(when, offset, Math.max(0.01, dur));
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const mastered = applyMasterGraph(ctx, masterIn, master);
+  // Mild glue reverb on master if warm
+  if (master.warmth > 0.3) {
+    const conv = ctx.createConvolver();
+    conv.buffer = createReverbIR(ctx, 1.4, 2.8);
+    const wet = ctx.createGain();
+    wet.gain.value = 0.08 * master.warmth;
+    mastered.connect(conv);
+    conv.connect(wet);
+    wet.connect(ctx.destination);
+  }
+  mastered.connect(ctx.destination);
+
+  onProgress?.(0.1);
+  const rendered = await ctx.startRendering();
+  onProgress?.(1);
+  return rendered;
+}
+
+export async function exportBuffer(
+  buffer: AudioBuffer,
+  format: ExportFormat,
+): Promise<Blob> {
+  if (format === 'mp3') return encodeMp3(buffer);
+  return writeWav(buffer);
+}
+
+export function downloadBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+
+export async function bufferFromChannels(
+  left: Float32Array,
+  right: Float32Array,
+  sampleRate: number,
+): Promise<AudioBuffer> {
+  const ctx = new OfflineAudioContext(2, left.length, sampleRate);
+  const buf = ctx.createBuffer(2, left.length, sampleRate);
+  buf.getChannelData(0).set(left);
+  buf.getChannelData(1).set(right);
+  return buf;
+}
