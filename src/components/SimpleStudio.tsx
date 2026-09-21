@@ -32,7 +32,7 @@ interface Props {
 
 const STEPS = [
   { n: 1, label: 'Import' },
-  { n: 2, label: 'Pick vocals & beat' },
+  { n: 2, label: 'Pick voice & beat' },
   { n: 3, label: 'Auto Sync' },
   { n: 4, label: 'Play' },
   { n: 5, label: 'Export' },
@@ -173,7 +173,7 @@ export function SimpleStudio(props: Props) {
           <section className="sync-panel">
             <div className="sync-fields">
               <label>
-                Vocals from
+                Voice song (vocals only)
                 <select
                   value={props.vocalsId}
                   onChange={(e) => props.onVocals(e.target.value)}
@@ -188,7 +188,7 @@ export function SimpleStudio(props: Props) {
                 </select>
               </label>
               <label>
-                Beat from
+                Beat song (instrumental / ad-libs)
                 <select
                   value={props.beatId}
                   onChange={(e) => props.onBeat(e.target.value)}
