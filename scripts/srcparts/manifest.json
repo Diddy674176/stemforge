@@ -19,21 +19,6 @@
     ]
   },
   {
-    "path": "src/workers/stemWorker.ts",
-    "parts": [
-      "src__workers__stemWorker.ts.p00",
-      "src__workers__stemWorker.ts.p01",
-      "src__workers__stemWorker.ts.p02"
-    ]
-  },
-  {
-    "path": "src/styles/studio.css",
-    "parts": [
-      "src__styles__studio.css.p00",
-      "src__styles__studio.css.p01"
-    ]
-  },
-  {
     "path": "src/audio/analysis.ts",
     "parts": [
       "src__audio__analysis.ts.p00",
