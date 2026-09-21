@@ -1,0 +1,71 @@
+[
+  {
+    "path": "src/hooks/useStemForge.ts",
+    "parts": [
+      "src__hooks__useStemForge.ts.p00",
+      "src__hooks__useStemForge.ts.p01",
+      "src__hooks__useStemForge.ts.p02",
+      "src__hooks__useStemForge.ts.p03",
+      "src__hooks__useStemForge.ts.p04",
+      "src__hooks__useStemForge.ts.p05"
+    ]
+  },
+  {
+    "path": "src/audio/StemEngine.ts",
+    "parts": [
+      "src__audio__StemEngine.ts.p00",
+      "src__audio__StemEngine.ts.p01",
+      "src__audio__StemEngine.ts.p02"
+    ]
+  },
+  {
+    "path": "src/workers/stemWorker.ts",
+    "parts": [
+      "src__workers__stemWorker.ts.p00",
+      "src__workers__stemWorker.ts.p01",
+      "src__workers__stemWorker.ts.p02"
+    ]
+  },
+  {
+    "path": "src/styles/studio.css",
+    "parts": [
+      "src__styles__studio.css.p00",
+      "src__styles__studio.css.p01"
+    ]
+  },
+  {
+    "path": "src/audio/analysis.ts",
+    "parts": [
+      "src__audio__analysis.ts.p00",
+      "src__audio__analysis.ts.p01"
+    ]
+  },
+  {
+    "path": "src/audio/exportAudio.ts",
+    "parts": [
+      "src__audio__exportAudio.ts.p00",
+      "src__audio__exportAudio.ts.p01"
+    ]
+  },
+  {
+    "path": "src/audio/separate.ts",
+    "parts": [
+      "src__audio__separate.ts.p00",
+      "src__audio__separate.ts.p01"
+    ]
+  },
+  {
+    "path": "src/components/Mixer.tsx",
+    "parts": [
+      "src__components__Mixer.tsx.p00",
+      "src__components__Mixer.tsx.p01"
+    ]
+  },
+  {
+    "path": "src/components/Timeline.tsx",
+    "parts": [
+      "src__components__Timeline.tsx.p00",
+      "src__components__Timeline.tsx.p01"
+    ]
+  }
+]
