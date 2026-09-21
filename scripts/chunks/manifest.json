@@ -1,0 +1,17 @@
+{
+  "archive": "stemforge-src.tar.gz",
+  "parts": [
+    "part_00.b64",
+    "part_01.b64",
+    "part_02.b64",
+    "part_03.b64",
+    "part_04.b64",
+    "part_05.b64",
+    "part_06.b64",
+    "part_07.b64",
+    "part_08.b64",
+    "part_09.b64"
+  ],
+  "total_chars": 117700,
+  "sha256": "dc75574636df7e76a726bef5dcb28037917f16371f4f5358e30cd225a43162be"
+}
