@@ -1,0 +1,147 @@
+      muted: false,
+        gain: 1,
+        pitchSemitones: pitch,
+        rate,
+      };
+      setProject((p) => ({ ...p, clips: [...p.clips, clip], selectedClipId: clip.id }));
+      setStatus(`Added ${stem.name} to timeline (rate ${rate.toFixed(3)}, pitch ${pitch >= 0 ? '+' : ''}${pitch}).`);
+    },
+    [project, playhead],
+  );
+
+  const moveClip = useCallback((clipId: string, startSec: number) => {
+    setProject((p) => ({
+      ...p,
+      clips: p.clips.map((c) =>
+        c.id === clipId
+          ? { ...c, startSec: snapTime(startSec, p.bpm, p.snap) }
+          : c,
+      ),
+    }));
+  }, []);
+
+  const splitClip = useCallback((clipId: string, atSec: number) => {
+    setProject((p) => {
+      const clip = p.clips.find((c) => c.id === clipId);
+      if (!clip) return p;
+      const local = atSec - clip.startSec;
+      if (local <= 0.05 || local >= clip.durationSec - 0.05) return p;
+      const a: TimelineClip = {
+        ...clip,
+        durationSec: local,
+        fadeOutSec: 0.02,
+      };
+      const b: TimelineClip = {
+        ...clip,
+        id: uid('clip'),
+        startSec: atSec,
+        offsetSec: clip.offsetSec + local * clip.rate,
+        durationSec: clip.durationSec - local,
+        fadeInSec: 0.02,
+      };
+      return {
+        ...p,
+        clips: p.clips.flatMap((c) => (c.id === clipId ? [a, b] : [c])),
+      };
+    });
+  }, []);
+
+  const deleteClip = useCallback((clipId: string) => {
+    setProject((p) => ({
+      ...p,
+      clips: p.clips.filter((c) => c.id !== clipId),
+      selectedClipId: p.selectedClipId === clipId ? null : p.selectedClipId,
+    }));
+  }, []);
+
+  const setBpm = useCallback((bpm: number) => {
+    setProject((p) => {
+      const next = { ...p, bpm };
+      // Retarget clip rates
+      next.clips = p.clips.map((c) => {
+        const src = p.sources.find((s) => s.id === c.sourceId);
+        const rate = src?.bpm ? bpm / src.bpm : c.rate;
+        return { ...c, rate };
+      });
+      return next;
+    });
+  }, []);
+
+  const setKey = useCallback((key: string) => {
+    setProject((p) => {
+      const next = { ...p, key };
+      if (p.autoHarmonicMatch) {
+        next.clips = p.clips.map((c) => {
+          const src = p.sources.find((s) => s.id === c.sourceId);
+          const pitch = src?.key ? keyDistanceSemitones(src.key, key) : 0;
+          return { ...c, pitchSemitones: pitch };
+        });
+      }
+      return next;
+    });
+  }, []);
+
+  const applyMasterPreset = useCallback((preset: MasterPresetId) => {
+    setProject((p) => ({
+      ...p,
+      master: { ...p.master, ...MASTER_PRESETS[preset], preset },
+    }));
+    engine.setMaster({ ...project.master, ...MASTER_PRESETS[preset], preset });
+  }, [project.master]);
+
+  const autoSyncBeginner = useCallback(
+    async (vocalsSrcId: string, beatSrcId: string, melodySrcId: string | null) => {
+      const vocalsSrc = project.sources.find((s) => s.id === vocalsSrcId);
+      const beatSrc = project.sources.find((s) => s.id === beatSrcId);
+      const melodySrc = melodySrcId ? project.sources.find((s) => s.id === melodySrcId) : null;
+      if (!vocalsSrc || !beatSrc) {
+        setStatus('Pick vocals and beat sources first.');
+        return;
+      }
+      setBusy(true);
+      setStatus('AUTO SYNC: matching tempo + key, building timeline…');
+      const targetBpm = beatSrc.bpm ?? project.bpm;
+      const targetKey = vocalsSrc.key ?? project.key;
+      const vStem =
+        vocalsSrc.stems.find((s) => s.kind === 'vocals') ?? vocalsSrc.stems[0];
+      const dStem =
+        beatSrc.stems.find((s) => s.kind === 'drums') ?? beatSrc.stems[0];
+      const bStem = beatSrc.stems.find((s) => s.kind === 'bass');
+      const mStem = melodySrc?.stems.find((s) => s.kind === 'melody' || s.kind === 'other');
+
+      const clips: TimelineClip[] = [];
+      const make = (stem: StemTrack, track: number, src: AudioSource) => {
+        const rate = (src.bpm ?? targetBpm) ? targetBpm / (src.bpm ?? targetBpm) : 1;
+        const pitch = project.autoHarmonicMatch && src.key
+          ? keyDistanceSemitones(src.key, targetKey)
+          : 0;
+        clips.push({
+          id: uid('clip'),
+          stemId: stem.id,
+          sourceId: stem.sourceId,
+          trackIndex: track,
+          startSec: 0,
+          offsetSec: 0,
+          durationSec: stem.duration / rate,
+          fadeInSec: 0.02,
+          fadeOutSec: 0.08,
+          muted: false,
+          gain: 1,
+          pitchSemitones: pitch,
+          rate,
+        });
+      };
+      if (dStem) make(dStem, 0, beatSrc);
+      if (bStem) make(bStem, 1, beatSrc);
+      if (vStem) make(vStem, 2, vocalsSrc);
+      if (mStem && melodySrc) make(mStem, 3, melodySrc);
+
+      // Balance volumes
+      for (const c of clips) {
+        const stem = [...vocalsSrc.stems, ...beatSrc.stems, ...(melodySrc?.stems ?? [])].find(
+          (s) => s.id === c.stemId,
+        );
+        if (!stem) continue;
+        if (stem.kind === 'vocals') stem.volume = 0.95;
+        if (stem.kind === 'drums') stem.volume = 0.8;
+ 
