@@ -1,1 +1,157 @@
-PLACEHOLDER_LOAD_FROM_/tmp/exact_p03.txt
+alance
+    bedVol = bedVol + (0.5 - bal) * 0.12;
+    bedVol = Math.min(0.6, Math.max(0.45, bedVol));
+    return { vocals: vVol, bed: bedVol, targetDb };
+  };
+
+  const mashupStemFx = (kind: StemKind): StemTrack['fx'] => {
+    const fx = defaultStemFx();
+    if (kind === 'vocals') {
+      fx.highPass = 150;
+      fx.compressor.enabled = true;
+      fx.compressor.threshold = -18;
+      fx.compressor.ratio = 3.5;
+      fx.compressor.attack = 0.008;
+      fx.compressor.release = 0.12;
+      fx.eq[3] = { freq: 3000, gain: 2.5, q: 1.1, type: 'peaking' };
+      fx.reverb = 0.08;
+    } else if (
+      kind === 'instrumental' ||
+      kind === 'drums' ||
+      kind === 'bass' ||
+      kind === 'other' ||
+      kind === 'melody'
+    ) {
+      fx.eq[2] = { freq: 1800, gain: -3.2, q: 0.85, type: 'peaking' };
+      fx.eq[3] = { freq: 3200, gain: -2.0, q: 1.0, type: 'peaking' };
+    }
+    return fx;
+  };
+
+  const volumeForKind = (
+    kind: StemKind,
+    gains: { vocals: number; bed: number },
+  ): number => {
+    if (kind === 'vocals') return gains.vocals;
+    if (kind === 'instrumental') return gains.bed;
+    if (kind === 'drums') return gains.bed * 0.95;
+    if (kind === 'bass') return gains.bed * 0.9;
+    if (kind === 'melody' || kind === 'other') return Math.min(0.55, gains.bed * 0.85);
+    return gains.bed;
+  };
+
+  /** Mute unused stems; apply voice-forward volumes + mashup FX on used stems. */
+  const applyMashupMute = (
+    sources: AudioSource[],
+    usedStemIds: Set<string>,
+    involvedSourceIds: Set<string>,
+    gains: { vocals: number; bed: number } = { vocals: 1.08, bed: 0.52 },
+  ): AudioSource[] =>
+    sources.map((src) => {
+      if (!involvedSourceIds.has(src.id)) return src;
+      return {
+        ...src,
+        stems: src.stems.map((st) => {
+          const used = usedStemIds.has(st.id);
+          if (!used) return { ...st, muted: true };
+          return {
+            ...st,
+            muted: false,
+            volume: volumeForKind(st.kind, gains),
+            fx: mashupStemFx(st.kind),
+          };
+        }),
+      };
+    });
+
+  const autoSyncBeginner = useCallback(
+    async (
+      vocalsSrcId: string,
+      beatSrcId: string,
+      melodySrcId: string | null,
+      voiceBalance = 0.72,
+    ) => {
+      const vocalsSrc = project.sources.find((s) => s.id === vocalsSrcId);
+      const beatSrc = project.sources.find((s) => s.id === beatSrcId);
+      const melodySrc = melodySrcId
+        ? project.sources.find((s) => s.id === melodySrcId)
+        : null;
+      if (!vocalsSrc || !beatSrc) {
+        setStatus('Pick vocals and beat sources first.');
+        return;
+      }
+
+      const isSeparated = (s: AudioSource) =>
+        s.status === 'separated' && s.stems.some((st) => Boolean(st.buffer));
+      if (
+        !isSeparated(vocalsSrc) ||
+        !isSeparated(beatSrc) ||
+        (melodySrc && !isSeparated(melodySrc))
+      ) {
+        setStatus('Wait until stem separation finishes');
+        return;
+      }
+
+      // Voice song → vocals ONLY (never instrumental/drums from voice song)
+      const vStem = vocalsSrc.stems.find((s) => s.kind === 'vocals' && s.buffer);
+      if (!vStem) {
+        setStatus('Wait until stem separation finishes');
+        return;
+      }
+
+      // Beat song → instrumental bed (NOT beat vocals). Never stems[0] fallback.
+      const beatBed = pickBeatBed(beatSrc);
+      if (beatBed.length === 0) {
+        setStatus('Wait until stem separation finishes');
+        return;
+      }
+
+      // Optional melody only from an explicit third source (never voice instrumental)
+      let mStem: StemTrack | null = null;
+      if (
+        melodySrc &&
+        melodySrc.id !== vocalsSrc.id &&
+        melodySrc.id !== beatSrc.id
+      ) {
+        mStem =
+          melodySrc.stems.find(
+            (s) => (s.kind === 'melody' || s.kind === 'other') && s.buffer,
+          ) ?? null;
+      }
+
+      setBusy(true);
+      setStatus('AUTO SYNC: matching tempo + key, building mashup…');
+      const targetBpm = beatSrc.bpm ?? project.bpm;
+      const targetKey = vocalsSrc.key ?? project.key;
+
+      const usedStemIds = new Set<string>();
+      const clips: TimelineClip[] = [];
+      let track = 0;
+
+      const make = (stem: StemTrack, src: AudioSource) => {
+        const rate = src.bpm ? targetBpm / src.bpm : 1;
+        const pitch =
+          project.autoHarmonicMatch && src.key
+            ? keyDistanceSemitones(src.key, targetKey)
+            : 0;
+        usedStemIds.add(stem.id);
+        clips.push({
+          id: uid('clip'),
+          stemId: stem.id,
+          sourceId: stem.sourceId,
+          trackIndex: track++,
+          startSec: 0,
+          offsetSec: 0,
+          durationSec: stem.duration / rate,
+          fadeInSec: 0.02,
+          fadeOutSec: 0.08,
+          muted: false,
+          gain: 1,
+          pitchSemitones: pitch,
+          rate,
+        });
+      };
+
+      // Clear previous clips by rebuilding from scratch
+      for (const bp of beatBed) make(bp, beatSrc);
+      make(vStem,
