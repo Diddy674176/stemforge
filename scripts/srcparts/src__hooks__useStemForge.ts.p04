@@ -1,1 +1,148 @@
-PLACEHOLDER
+          assignments: [
+            ...bed.map((st) => ({
+              role: st.kind as StemKind,
+              sourceId: C.id,
+              stemId: st.id,
+            })),
+            { role: 'vocals' as StemKind, sourceId: voiceSrc.id, stemId: v.id },
+          ],
+        };
+      }
+    }
+    setProposals(top.filter(Boolean).slice(0, 3));
+    setStatus(`Smart Remix proposed ${Math.min(3, top.length)} combinations.`);
+  }, [project.sources]);
+
+  const loadProposal = useCallback(
+    (prop: RemixProposal) => {
+      const clips: TimelineClip[] = [];
+      const usedStemIds = new Set<string>();
+      const involved = new Set<string>();
+      prop.assignments.forEach((a, idx) => {
+        const src = project.sources.find((s) => s.id === a.sourceId);
+        const stem = src?.stems.find((s) => s.id === a.stemId);
+        if (!src || !stem || !stem.buffer) return;
+        // Never schedule beat-song vocals or wrong kinds via stale proposals
+        if (a.role === 'vocals' && stem.kind !== 'vocals') return;
+        const rate = src.bpm ? project.bpm / src.bpm : 1;
+        const pitch =
+          project.autoHarmonicMatch && src.key
+            ? keyDistanceSemitones(src.key, project.key)
+            : 0;
+        usedStemIds.add(stem.id);
+        involved.add(src.id);
+        clips.push({
+          id: uid('clip'),
+          stemId: stem.id,
+          sourceId: src.id,
+          trackIndex: idx,
+          startSec: 0,
+          offsetSec: 0,
+          durationSec: stem.duration / rate,
+          fadeInSec: 0.02,
+          fadeOutSec: 0.08,
+          muted: false,
+          gain: 1,
+          pitchSemitones: pitch,
+          rate,
+        });
+      });
+      if (clips.length === 0) {
+        setStatus('Proposal stems missing — wait until stem separation finishes');
+        return;
+      }
+      const nextSources = applyMashupMute(project.sources, usedStemIds, involved);
+      const next: ProjectState = {
+        ...project,
+        clips,
+        sources: nextSources,
+        updatedAt: Date.now(),
+      };
+      setProject(next);
+      syncEngine(next);
+      const vAssign = prop.assignments.find((a) => a.role === 'vocals');
+      const bedAssign = prop.assignments.find(
+        (a) => a.role === 'instrumental' || a.role === 'drums',
+      );
+      const vName =
+        project.sources.find((s) => s.id === vAssign?.sourceId)?.name ?? 'voice';
+      const bName =
+        project.sources.find((s) => s.id === bedAssign?.sourceId)?.name ?? 'beat';
+      setStatus(`Playing vocals from ${vName} over instrumental from ${bName}`);
+    },
+    [project, syncEngine],
+  );
+
+  const exportMix = useCallback(
+    async (format: ExportFormat) => {
+      setBusy(true);
+      setStatus('Rendering mix…');
+      try {
+        const stemsById = new Map(allStems.map((s) => [s.id, s]));
+        const buffer = await renderMix({
+          sampleRate: 44100,
+          durationSec: Math.max(duration, 1),
+          clips: project.clips,
+          stemsById,
+          master: project.master,
+          onProgress: (p) => setStatus(`Rendering… ${Math.round(p * 100)}%`),
+        });
+        const blob = await exportBuffer(buffer, format);
+        downloadBlob(blob, `${project.name || 'stemforge-mix'}.${format}`);
+        setStatus(`Exported ${format.toUpperCase()}.`);
+      } catch (e) {
+        setStatus(`Export failed: ${e instanceof Error ? e.message : e}`);
+      }
+      setBusy(false);
+    },
+    [allStems, duration, project],
+  );
+
+  const exportStem = useCallback(
+    async (stem: StemTrack, format: ExportFormat) => {
+      if (!stem.buffer) return;
+      setBusy(true);
+      const blob = await exportBuffer(stem.buffer, format);
+      downloadBlob(blob, `${stem.name}.${format}`);
+      setBusy(false);
+      setStatus(`Exported stem ${stem.name}.`);
+    },
+    [],
+  );
+
+  const saveProject = useCallback(async () => {
+    setBusy(true);
+    setStatus('Saving project to IndexedDB…');
+    try {
+      const audio: SavedAudioBlob[] = [];
+      for (const src of project.sources) {
+        if (src.buffer) {
+          audio.push({
+            id: uid('aud'),
+            projectId: project.id,
+            refId: src.id,
+            kind: 'source',
+            sampleRate: src.sampleRate,
+            channels: src.buffer.numberOfChannels,
+            pcm: audioBufferToPcm(src.buffer),
+            name: src.name,
+            meta: { bpm: src.bpm, key: src.key, fileName: src.fileName },
+          });
+        }
+        for (const stem of src.stems) {
+          if (!stem.buffer) continue;
+          audio.push({
+            id: uid('aud'),
+            projectId: project.id,
+            refId: stem.id,
+            kind: 'stem',
+            sampleRate: stem.sampleRate,
+            channels: stem.buffer.numberOfChannels,
+            pcm: audioBufferToPcm(stem.buffer),
+            name: stem.name,
+            meta: {
+              sourceId: stem.sourceId,
+              kind: stem.kind,
+              volume: stem.volume,
+              pan: stem.pan,
+      
