@@ -1,0 +1,169 @@
+import type { MasterPresetId, MasterSettings, StemTrack } from '../audio/types';
+
+interface Props {
+  stem: StemTrack | null;
+  master: MasterSettings;
+  onStemChange: (id: string, patch: Partial<StemTrack>) => void;
+  onMasterPreset: (p: MasterPresetId) => void;
+  onMasterPatch: (patch: Partial<MasterSettings>) => void;
+  onAiMix: () => void;
+}
+
+const PRESETS: MasterPresetId[] = [
+  'none',
+  'balanced',
+  'loud',
+  'warm',
+  'clean',
+  'bass-heavy',
+  'bright',
+  'streaming',
+];
+
+export function Mixer({ stem, master, onStemChange, onMasterPreset, onMasterPatch, onAiMix }: Props) {
+  return (
+    <aside className="panel mixer-panel">
+      <header className="panel-head">
+        <h2>Mixer / FX</h2>
+        <button type="button" className="btn" onClick={onAiMix}>AI Mix</button>
+      </header>
+
+      {stem ? (
+        <div className="mixer-stem">
+          <h3 style={{ color: stem.color }}>{stem.name}</h3>
+          <label>
+            Volume
+            <input
+              type="range"
+              min={0}
+              max={1.5}
+              step={0.01}
+              value={stem.volume}
+              onChange={(e) => onStemChange(stem.id, { volume: Number(e.target.value) })}
+            />
+          </label>
+          <label>
+            Pan
+            <input
+              type="range"
+              min={-1}
+              max={1}
+              step={0.01}
+              value={stem.pan}
+              onChange={(e) => onStemChange(stem.id, { pan: Number(e.target.value) })}
+            />
+          </label>
+          <label>
+            Gain (dB)
+            <input
+              type="range"
+              min={-12}
+              max={12}
+              step={0.1}
+              value={stem.gainDb}
+              onChange={(e) => onStemChange(stem.id, { gainDb: Number(e.target.value) })}
+            />
+          </label>
+          <div className="eq-row">
+            {stem.fx.eq.map((band, i) => (
+              <label key={band.freq} className="eq-band">
+                {band.freq >= 1000 ? `${band.freq / 1000}k` : band.freq}
+                <input
+                  type="range"
+                  min={-12}
+                  max={12}
+                  step={0.5}
+                  value={band.gain}
+                  onChange={(e) => {
+                    const eq = stem.fx.eq.map((b, j) =>
+                      j === i ? { ...b, gain: Number(e.target.value) } : b,
+                    );
+                    onStemChange(stem.id, { fx: { ...stem.fx, eq } });
+                  }}
+                />
+              </label>
+            ))}
+          </div>
+          <label>
+            High-pass
+            <input
+              type="range"
+              min={20}
+              max={500}
+              value={stem.fx.highPass}
+              onChange={(e) =>
+                onStemChange(stem.id, { fx: { ...stem.fx, highPass: Number(e.target.value) } })
+              }
+            />
+          </label>
+          <label>
+            Low-pass / Filter
+            <input
+              type="range"
+              min={200}
+              max={20000}
+              value={stem.fx.filter}
+              onChange={(e) =>
+                onStemChange(stem.id, { fx: { ...stem.fx, filter: Number(e.target.value) } })
+              }
+            />
+          </label>
+          <label>
+            Reverb
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.01}
+              value={stem.fx.reverb}
+              onChange={(e) =>
+                onStemChange(stem.id, { fx: { ...stem.fx, reverb: Number(e.target.value) } })
+              }
+            />
+          </label>
+          <label>
+            Delay
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.01}
+              value={stem.fx.delay}
+              onChange={(e) =>
+                onStemChange(stem.id, { fx: { ...stem.fx, delay: Number(e.target.value) } })
+              }
+            />
+          </label>
+          <label>
+            Lo-fi
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.01}
+              value={stem.fx.lofi}
+              onChange={(e) =>
+                onStemChange(stem.id, { fx: { ...stem.fx, lofi: Number(e.target.value) } })
+              }
+            />
+          </label>
+          <label className="chk">
+            <input
+              type="checkbox"
+              checked={stem.fx.compressor.enabled}
+              onChange={(e) =>
+                onStemChange(stem.id, {
+                  fx: {
+                    ...stem.fx,
+                    compressor: { ...stem.fx.compressor, enabled: e.target.checked },
+                  },
+                })
+              }
+            />
+            Compressor
+          </label>
+          <label className="chk">
+            <input
+              type="checkbox"
+              checked={stem.fx.halfTime}
+              onChange={(e) =>

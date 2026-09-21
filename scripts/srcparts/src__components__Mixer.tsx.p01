@@ -1,0 +1,67 @@
+
+                onStemChange(stem.id, { fx: { ...stem.fx, halfTime: e.target.checked } })
+              }
+            />
+            Half-time
+          </label>
+        </div>
+      ) : (
+        <p className="muted">Select a stem to edit mixer / FX.</p>
+      )}
+
+      <div className="master-section">
+        <h3>Mastering</h3>
+        <div className="preset-grid">
+          {PRESETS.map((p) => (
+            <button
+              key={p}
+              type="button"
+              className={`btn chip-btn ${master.preset === p ? 'primary' : ''}`}
+              onClick={() => onMasterPreset(p)}
+            >
+              {p}
+            </button>
+          ))}
+        </div>
+        <label>
+          Master gain
+          <input
+            type="range"
+            min={-6}
+            max={6}
+            step={0.1}
+            value={master.gainDb}
+            onChange={(e) => onMasterPatch({ gainDb: Number(e.target.value) })}
+          />
+        </label>
+        <label>
+          Warmth
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.01}
+            value={master.warmth}
+            onChange={(e) => onMasterPatch({ warmth: Number(e.target.value) })}
+          />
+        </label>
+        <label>
+          Brightness
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.01}
+            value={master.brightness}
+            onChange={(e) => onMasterPatch({ brightness: Number(e.target.value) })}
+          />
+        </label>
+      </div>
+
+      <div className="coming">
+        <h4>Coming soon</h4>
+        <p className="muted">Automation lanes · NLP assistant · Drum fills library</p>
+      </div>
+    </aside>
+  );
+}
