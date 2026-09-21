@@ -17,9 +17,9 @@ export function BeginnerMode(props: Props) {
   return (
     <div className="beginner">
       <h3>Auto Sync</h3>
-      <p className="muted">Pick vocals + beat (+ optional melody). We match tempo &amp; key.</p>
+      <p className="muted">Voice = singing only. Beat = instrumental bed (no beat vocals). We match tempo &amp; key.</p>
       <label>
-        Vocals source
+        Voice song (vocals only)
         <select value={props.vocalsId} onChange={(e) => props.onVocals(e.target.value)}>
           <option value="">—</option>
           {opts.map((s) => (
@@ -28,7 +28,7 @@ export function BeginnerMode(props: Props) {
         </select>
       </label>
       <label>
-        Beat / instrumental source
+        Beat song (instrumental / ad-libs)
         <select value={props.beatId} onChange={(e) => props.onBeat(e.target.value)}>
           <option value="">—</option>
           {opts.map((s) => (
