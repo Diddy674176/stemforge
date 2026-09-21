@@ -1,0 +1,155 @@
+mported',
+          };
+          setProject((p) => ({ ...p, sources: [...p.sources, source], updatedAt: Date.now() }));
+          setStatus(`Imported ${file.name}. Analyzing…`);
+
+          // Analyze + separate
+          setProject((p) => ({
+            ...p,
+            sources: p.sources.map((s) =>
+              s.id === source.id ? { ...s, status: 'analyzing', separating: true } : s,
+            ),
+          }));
+          const analysis = analyzeBuffer(buffer);
+          setProject((p) => ({
+            ...p,
+            bpm: p.sources.length <= 1 ? analysis.bpm : p.bpm,
+            key: p.sources.length <= 1 ? analysis.key : p.key,
+            sources: p.sources.map((s) =>
+              s.id === source.id
+                ? {
+                    ...s,
+                    bpm: analysis.bpm,
+                    key: analysis.key,
+                    structure: analysis.structure,
+                    peaks: analysis.peaks,
+                    analyzeProgress: 0.2,
+                  }
+                : s,
+            ),
+          }));
+
+          setStatus(`Separating stems for ${file.name} (in-browser HPSS + center mask)…`);
+          let stems: StemTrack[];
+          try {
+            stems = await separateStems(source.id, buffer, (prog) => {
+              setProject((p) => ({
+                ...p,
+                sources: p.sources.map((s) =>
+                  s.id === source.id
+                    ? { ...s, analyzeProgress: 0.2 + prog.progress * 0.8 }
+                    : s,
+                ),
+              }));
+              setStatus(`${file.name}: ${prog.message} (${Math.round(prog.progress * 100)}%)`);
+            });
+          } catch (e) {
+            console.warn('Worker separate failed, fallback', e);
+            setStatus('Worker failed — using fallback band split…');
+            stems = await separateStemsFallback(source.id, buffer);
+          }
+
+          // Add melody alias from other
+          const other = stems.find((s) => s.kind === 'other');
+          if (other?.buffer) {
+            stems.push({
+              ...other,
+              id: uid('stem'),
+              kind: 'melody',
+              name: 'Melody',
+              color: STEM_COLORS.melody,
+              volume: 0.75,
+            });
+          }
+
+          setProject((p) => ({
+            ...p,
+            sources: p.sources.map((s) =>
+              s.id === source.id
+                ? {
+                    ...s,
+                    stems,
+                    separating: false,
+                    analyzeProgress: 1,
+                    status: 'separated',
+                  }
+                : s,
+            ),
+            updatedAt: Date.now(),
+          }));
+          setStatus(`Ready: ${file.name} → ${stems.length} stems.`);
+        } catch (err) {
+          setStatus(`Failed to import ${file.name}: ${err instanceof Error ? err.message : err}`);
+        }
+      }
+      setBusy(false);
+    },
+    [rightsAccepted],
+  );
+
+  const duration = useMemo(() => {
+    let m = 8;
+    for (const c of project.clips) m = Math.max(m, c.startSec + c.durationSec);
+    for (const s of project.sources) m = Math.max(m, s.duration);
+    return m;
+  }, [project.clips, project.sources]);
+
+  const play = useCallback(async () => {
+    syncEngine();
+    await engine.play(playhead);
+  }, [syncEngine, playhead]);
+
+  const pause = useCallback(async () => {
+    await engine.pause();
+    setPlayhead(engine.getPlayhead());
+  }, []);
+
+  const stop = useCallback(async () => {
+    await engine.stop();
+    setPlayhead(0);
+  }, []);
+
+  const seek = useCallback(async (sec: number) => {
+    await engine.seek(sec);
+    setPlayhead(sec);
+  }, []);
+
+  const updateStem = useCallback((stemId: string, patch: Partial<StemTrack>) => {
+    setProject((p) => {
+      const next = {
+        ...p,
+        sources: p.sources.map((src) => ({
+          ...src,
+          stems: src.stems.map((s) => (s.id === stemId ? { ...s, ...patch } : s)),
+        })),
+      };
+      const stem = next.sources.flatMap((s) => s.stems).find((s) => s.id === stemId);
+      if (stem) engine.updateStemLive(stem);
+      return next;
+    });
+  }, []);
+
+  const selectStem = useCallback((id: string | null) => {
+    setProject((p) => ({ ...p, selectedStemId: id }));
+  }, []);
+
+  const addStemToTimeline = useCallback(
+    (stem: StemTrack, trackIndex?: number) => {
+      const src = project.sources.find((s) => s.id === stem.sourceId);
+      let rate = 1;
+      let pitch = 0;
+      if (src?.bpm && project.bpm) rate = project.bpm / src.bpm;
+      if (project.autoHarmonicMatch && src?.key) {
+        pitch = keyDistanceSemitones(src.key, project.key);
+      }
+      const clip: TimelineClip = {
+        id: uid('clip'),
+        stemId: stem.id,
+        sourceId: stem.sourceId,
+        trackIndex: trackIndex ?? project.clips.length,
+        startSec: snapTime(playhead, project.bpm, project.snap),
+        offsetSec: 0,
+        durationSec: stem.duration / rate,
+        fadeInSec: 0.02,
+        fadeOutSec: 0.05,
+  
