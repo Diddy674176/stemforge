@@ -7,7 +7,6 @@
         bpm: targetBpm,
         key: targetKey,
         clips,
-        beginnerMode: false,
         updatedAt: Date.now(),
       }));
       setBusy(false);
@@ -124,7 +123,7 @@
           rate,
         });
       });
-      setProject((p) => ({ ...p, clips, beginnerMode: false }));
+      setProject((p) => ({ ...p, clips }));
       setStatus(`Loaded proposal: ${prop.title}`);
     },
     [project],
