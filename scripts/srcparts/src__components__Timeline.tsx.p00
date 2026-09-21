@@ -1,0 +1,146 @@
+import { useMemo, useRef } from 'react';
+import type { ProjectState, StemTrack, TimelineClip, StructureMarker } from '../audio/types';
+import { formatTime } from '../utils/format';
+
+interface Props {
+  project: ProjectState;
+  stems: StemTrack[];
+  playhead: number;
+  duration: number;
+  onSeek: (s: number) => void;
+  onMoveClip: (id: string, start: number) => void;
+  onSelectClip: (id: string | null) => void;
+  onSplitClip: (id: string, at: number) => void;
+  onDeleteClip: (id: string) => void;
+  onZoom: (z: number) => void;
+}
+
+function WaveformMini({ peaks, color }: { peaks: Float32Array; color: string }) {
+  const d = useMemo(() => {
+    const w = 200;
+    const h = 28;
+    let path = `M 0 ${h / 2}`;
+    const step = Math.max(1, Math.floor(peaks.length / w));
+    for (let x = 0; x < w; x++) {
+      const v = peaks[Math.min(peaks.length - 1, x * step)] || 0;
+      const y = (1 - v) * (h / 2);
+      path += ` L ${x} ${y}`;
+    }
+    for (let x = w - 1; x >= 0; x--) {
+      const v = peaks[Math.min(peaks.length - 1, x * step)] || 0;
+      const y = h / 2 + v * (h / 2);
+      path += ` L ${x} ${y}`;
+    }
+    return path;
+  }, [peaks]);
+  return (
+    <svg className="clip-wave" viewBox="0 0 200 28" preserveAspectRatio="none">
+      <path d={d} fill={color} opacity={0.55} />
+    </svg>
+  );
+}
+
+function ClipView({
+  clip,
+  stem,
+  pxPerSec,
+  selected,
+  onSelect,
+  onMove,
+}: {
+  clip: TimelineClip;
+  stem?: StemTrack;
+  pxPerSec: number;
+  selected: boolean;
+  onSelect: () => void;
+  onMove: (start: number) => void;
+}) {
+  const dragging = useRef(false);
+  const origin = useRef({ x: 0, start: 0 });
+
+  return (
+    <div
+      className={`clip ${selected ? 'selected' : ''} ${clip.muted ? 'muted' : ''}`}
+      style={{
+        left: clip.startSec * pxPerSec,
+        width: Math.max(8, clip.durationSec * pxPerSec),
+        background: stem?.color ?? '#666',
+      }}
+      onClick={(e) => {
+        e.stopPropagation();
+        onSelect();
+      }}
+      onPointerDown={(e) => {
+        dragging.current = true;
+        origin.current = { x: e.clientX, start: clip.startSec };
+        (e.target as HTMLElement).setPointerCapture(e.pointerId);
+      }}
+      onPointerMove={(e) => {
+        if (!dragging.current) return;
+        const dx = e.clientX - origin.current.x;
+        onMove(origin.current.start + dx / pxPerSec);
+      }}
+      onPointerUp={() => {
+        dragging.current = false;
+      }}
+    >
+      <div className="clip-title">
+        {stem?.name ?? 'Clip'} · {clip.rate.toFixed(2)}× · {clip.pitchSemitones >= 0 ? '+' : ''}
+        {clip.pitchSemitones}st
+      </div>
+      {stem && <WaveformMini peaks={stem.peaks} color="#fff" />}
+    </div>
+  );
+}
+
+export function Timeline(props: Props) {
+  const { project, stems, playhead, duration } = props;
+  const pxPerSec = project.zoom;
+  const width = Math.max(800, duration * pxPerSec + 200);
+  const tracks = Math.max(4, ...project.clips.map((c) => c.trackIndex + 1), 4);
+  const ref = useRef<HTMLDivElement>(null);
+  const stemMap = useMemo(() => new Map(stems.map((s) => [s.id, s])), [stems]);
+  const markers: StructureMarker[] = project.sources[0]?.structure ?? [];
+  const beatSec = 60 / project.bpm;
+  const beats = Math.ceil(duration / beatSec);
+
+  const onBgClick = (e: React.MouseEvent) => {
+    const el = ref.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const x = e.clientX - rect.left + el.scrollLeft - 80;
+    props.onSeek(Math.max(0, x / pxPerSec));
+  };
+
+  return (
+    <section className="panel timeline-panel">
+      <header className="panel-head">
+        <h2>Timeline</h2>
+        <div className="row gap">
+          <button type="button" className="btn" onClick={() => props.onZoom(Math.max(10, pxPerSec - 10))}>−</button>
+          <span className="mono">{pxPerSec}px/s</span>
+          <button type="button" className="btn" onClick={() => props.onZoom(Math.min(200, pxPerSec + 10))}>+</button>
+          {project.selectedClipId && (
+            <>
+              <button type="button" className="btn" onClick={() => props.onSplitClip(project.selectedClipId!, playhead)}>
+                Split at playhead
+              </button>
+              <button type="button" className="btn danger" onClick={() => props.onDeleteClip(project.selectedClipId!)}>
+                Delete clip
+              </button>
+            </>
+          )}
+        </div>
+      </header>
+      <div className="timeline-scroll" ref={ref} onClick={onBgClick}>
+        <div className="timeline-inner" style={{ width }}>
+          <div className="ruler">
+            {Array.from({ length: Math.ceil(duration) + 1 }, (_, i) => (
+              <span key={i} style={{ left: i * pxPerSec }} className="ruler-mark">
+                {formatTime(i)}
+              </span>
+            ))}
+            {Array.from({ length: beats }, (_, i) => (
+              <i key={`b${i}`} className={`beat ${i % 4 === 0 ? 'bar' : ''}`} style={{ left: i * beatSec * pxPerSec }} />
+            ))}
+        

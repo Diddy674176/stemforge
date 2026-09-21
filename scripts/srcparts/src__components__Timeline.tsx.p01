@@ -1,0 +1,42 @@
+  </div>
+          <div className="structure-lane">
+            {markers.map((m) => (
+              <div
+                key={m.id}
+                className="structure-block"
+                style={{
+                  left: m.startSec * pxPerSec,
+                  width: Math.max(4, (m.endSec - m.startSec) * pxPerSec),
+                }}
+                title={`${m.label} ${formatTime(m.startSec)}`}
+              >
+                {m.label}
+              </div>
+            ))}
+          </div>
+          {Array.from({ length: tracks }, (_, ti) => (
+            <div key={ti} className="track-lane">
+              <div className="track-label">Trk {ti + 1}</div>
+              <div className="track-canvas">
+                {project.clips
+                  .filter((c) => c.trackIndex === ti)
+                  .map((clip) => (
+                    <ClipView
+                      key={clip.id}
+                      clip={clip}
+                      stem={stemMap.get(clip.stemId)}
+                      pxPerSec={pxPerSec}
+                      selected={project.selectedClipId === clip.id}
+                      onSelect={() => props.onSelectClip(clip.id)}
+                      onMove={(start) => props.onMoveClip(clip.id, start)}
+                    />
+                  ))}
+              </div>
+            </div>
+          ))}
+          <div className="playhead" style={{ left: 80 + playhead * pxPerSec }} />
+        </div>
+      </div>
+    </section>
+  );
+}
