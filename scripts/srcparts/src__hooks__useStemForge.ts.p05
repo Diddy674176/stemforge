@@ -1,1 +1,177 @@
-PLACEHOLDER
+        color: stem.color,
+            },
+          });
+        }
+      }
+      const serializable = {
+        ...project,
+        sources: project.sources.map((s) => ({
+          ...s,
+          buffer: null,
+          stems: s.stems.map((st) => ({ ...st, buffer: null, peaks: Array.from(st.peaks) })),
+          peaks: Array.from(s.peaks),
+          structure: s.structure,
+        })),
+      };
+      await saveProjectRecord(
+        {
+          meta: {
+            id: project.id,
+            name: project.name,
+            updatedAt: Date.now(),
+            createdAt: project.createdAt,
+            bpm: project.bpm,
+            key: project.key,
+            sourceCount: project.sources.length,
+            clipCount: project.clips.length,
+          },
+          stateJson: JSON.stringify(serializable),
+        },
+        audio,
+      );
+      setSavedList(await listProjects());
+      setStatus('Project saved locally (IndexedDB).');
+    } catch (e) {
+      setStatus(`Save failed: ${e instanceof Error ? e.message : e}`);
+    }
+    setBusy(false);
+  }, [project]);
+
+  const loadSaved = useCallback(async (id: string) => {
+    setBusy(true);
+    setStatus('Loading project…');
+    try {
+      const data = await loadProject(id);
+      if (!data) throw new Error('Not found');
+      const state = JSON.parse(data.record.stateJson) as ProjectState;
+      const ctx = new AudioContext();
+      const byRef = new Map(data.audio.map((a) => [a.refId, a]));
+      state.sources = await Promise.all(
+        state.sources.map(async (src) => {
+          const a = byRef.get(src.id);
+          let buffer: AudioBuffer | null = null;
+          if (a) buffer = pcmToAudioBuffer(ctx, a.pcm, a.sampleRate, a.channels);
+          const stems = await Promise.all(
+            src.stems.map(async (st) => {
+              const sa = byRef.get(st.id);
+              let sb: AudioBuffer | null = null;
+              if (sa) sb = pcmToAudioBuffer(ctx, sa.pcm, sa.sampleRate, sa.channels);
+              return {
+                ...st,
+                peaks: Float32Array.from(st.peaks as unknown as number[]),
+                buffer: sb,
+                fx: st.fx ?? defaultStemFx(),
+              };
+            }),
+          );
+          return {
+            ...src,
+            peaks: Float32Array.from(src.peaks as unknown as number[]),
+            buffer,
+            stems,
+          };
+        }),
+      );
+      await ctx.close().catch(() => undefined);
+      setProject({ ...state, updatedAt: Date.now() });
+      setRightsAccepted(true);
+      setStatus(`Loaded ${state.name}.`);
+    } catch (e) {
+      setStatus(`Load failed: ${e instanceof Error ? e.message : e}`);
+    }
+    setBusy(false);
+  }, []);
+
+  const removeSaved = useCallback(async (id: string) => {
+    await deleteProject(id);
+    setSavedList(await listProjects());
+  }, []);
+
+  const selectedStem = allStems.find((s) => s.id === project.selectedStemId) ?? null;
+
+  const aiMix = useCallback(() => {
+    setProject((p) => {
+      const next = { ...p };
+      next.sources = p.sources.map((src) => ({
+        ...src,
+        stems: src.stems.map((st) => {
+          const vol =
+            st.kind === 'vocals'
+              ? 0.92
+              : st.kind === 'drums'
+                ? 0.78
+                : st.kind === 'bass'
+                  ? 0.72
+                  : 0.6;
+          const pan =
+            st.kind === 'vocals' ? 0 : st.kind === 'drums' ? 0 : st.kind === 'bass' ? 0 : st.kind === 'melody' ? -0.2 : 0.15;
+          const fx = defaultStemFx();
+          if (st.kind === 'vocals') {
+            fx.highPass = 100;
+            fx.compressor.enabled = true;
+            fx.reverb = 0.12;
+          }
+          if (st.kind === 'bass') {
+            fx.lowPass = 4000;
+            fx.eq[0].gain = 2;
+          }
+          if (st.kind === 'drums') {
+            fx.compressor.enabled = true;
+            fx.compressor.ratio = 4;
+          }
+          return { ...st, volume: vol, pan, fx };
+        }),
+      }));
+      next.master = { ...defaultMaster(), preset: 'balanced' };
+      return next;
+    });
+    setStatus('AI Mix applied — balanced starting point (fully editable).');
+  }, []);
+
+  return {
+    project,
+    setProject,
+    playing,
+    playhead,
+    status,
+    busy,
+    duration,
+    allStems,
+    selectedStem,
+    proposals,
+    savedList,
+    rightsAccepted,
+    setRightsAccepted,
+    importFiles,
+    play,
+    pause,
+    stop,
+    seek,
+    updateStem,
+    selectStem,
+    addStemToTimeline,
+    moveClip,
+    splitClip,
+    deleteClip,
+    setBpm,
+    setKey,
+    applyMasterPreset,
+    autoSyncBeginner,
+    runSmartRemix,
+    loadProposal,
+    exportMix,
+    exportStem,
+    saveProject,
+    loadSaved,
+    removeSaved,
+    aiMix,
+    previewStem: async (stem: StemTrack) => {
+      syncEngine();
+      await engine.previewStem(stem);
+    },
+  };
+}
+
+function snapTime(sec: number, bpm: number, snap: ProjectState['snap']): number {
+  if (snap === 'off') return Math.max(0, sec);
+  const beat = 60
