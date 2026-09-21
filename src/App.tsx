@@ -13,6 +13,7 @@ export default function App() {
   const [vocalsId, setVocalsId] = useState('');
   const [beatId, setBeatId] = useState('');
   const [melodyId, setMelodyId] = useState('');
+  const [voiceBalance, setVoiceBalance] = useState(0.72);
   const [advanced, setAdvanced] = useState(false);
 
   return (
@@ -52,7 +53,9 @@ export default function App() {
           onVocals={setVocalsId}
           onBeat={setBeatId}
           onMelody={setMelodyId}
-          onAutoSync={() => sf.autoSyncBeginner(vocalsId, beatId, melodyId || null)}
+          voiceBalance={voiceBalance}
+          onVoiceBalance={setVoiceBalance}
+          onAutoSync={() => sf.autoSyncBeginner(vocalsId, beatId, melodyId || null, voiceBalance)}
           onSmartRemix={sf.runSmartRemix}
           onLoadProposal={sf.loadProposal}
           onSelectStem={sf.selectStem}
@@ -83,7 +86,7 @@ export default function App() {
               onVocals={setVocalsId}
               onBeat={setBeatId}
               onMelody={setMelodyId}
-              onAutoSync={() => sf.autoSyncBeginner(vocalsId, beatId, melodyId || null)}
+              onAutoSync={() => sf.autoSyncBeginner(vocalsId, beatId, melodyId || null, voiceBalance)}
               onSmartRemix={sf.runSmartRemix}
               onLoadProposal={sf.loadProposal}
             />
