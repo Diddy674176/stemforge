@@ -1,0 +1,106 @@
+* Energy-envelope structure heuristics. */
+export function detectStructure(
+  mono: Float32Array,
+  sampleRate: number,
+  bpm: number,
+): StructureMarker[] {
+  const duration = mono.length / sampleRate;
+  const barSec = (60 / Math.max(60, bpm)) * 4;
+  const buckets = Math.max(16, Math.floor(duration / Math.max(0.5, barSec / 2)));
+  const peaks = computePeaks(mono, buckets);
+  const markers: StructureMarker[] = [];
+
+  // Smooth energy
+  const energy = Array.from(peaks);
+  const smooth = energy.map((_, i) => {
+    let s = 0;
+    let c = 0;
+    for (let d = -2; d <= 2; d++) {
+      const j = i + d;
+      if (j >= 0 && j < energy.length) {
+        s += energy[j];
+        c++;
+      }
+    }
+    return s / c;
+  });
+  const mean = smooth.reduce((a, b) => a + b, 0) / smooth.length;
+  const labels: StructureLabel[] = [];
+  for (let i = 0; i < smooth.length; i++) {
+    const t = (i / smooth.length) * duration;
+    const e = smooth[i];
+    if (t < barSec * 2) labels.push('intro');
+    else if (t > duration - barSec * 3) labels.push('outro');
+    else if (e > mean * 1.25) labels.push(i % 8 < 4 ? 'chorus' : 'drop');
+    else if (e < mean * 0.7) labels.push('breakdown');
+    else if (e > mean * 1.05) labels.push('pre-chorus');
+    else labels.push('verse');
+  }
+
+  // Merge consecutive
+  let i = 0;
+  while (i < labels.length) {
+    let j = i + 1;
+    while (j < labels.length && labels[j] === labels[i]) j++;
+    const startSec = (i / labels.length) * duration;
+    const endSec = (j / labels.length) * duration;
+    if (endSec - startSec >= barSec * 0.5) {
+      markers.push({
+        id: uid('sec'),
+        label: labels[i],
+        startSec,
+        endSec,
+      });
+    }
+    i = j;
+  }
+  if (markers.length === 0) {
+    markers.push({ id: uid('sec'), label: 'verse', startSec: 0, endSec: duration });
+  }
+  return markers;
+}
+
+export function analyzeBuffer(buffer: AudioBuffer): {
+  bpm: number;
+  key: string;
+  structure: StructureMarker[];
+  peaks: Float32Array;
+} {
+  const L = buffer.getChannelData(0);
+  const R = buffer.numberOfChannels > 1 ? buffer.getChannelData(1) : null;
+  const mono = mixdownMono(L, R);
+  const bpm = detectBpm(mono, buffer.sampleRate);
+  const key = detectKey(mono, buffer.sampleRate);
+  const structure = detectStructure(mono, buffer.sampleRate, bpm);
+  const peaks = computePeaks(mono);
+  return { bpm, key, structure, peaks };
+}
+
+/** Camelot-ish compatibility 0–100. */
+export function compatibilityScore(
+  bpmA: number,
+  keyA: string,
+  bpmB: number,
+  keyB: string,
+): { score: number; notes: string[] } {
+  const notes: string[] = [];
+  const bpmDelta = Math.abs(bpmA - bpmB);
+  let score = 100;
+  if (bpmDelta > 2) {
+    const penalty = Math.min(40, bpmDelta * 0.8);
+    score -= penalty;
+    if (bpmDelta > 15) notes.push('Vocals may require significant tempo adjustment.');
+    else notes.push(`Tempo gap ~${bpmDelta.toFixed(0)} BPM — time-stretch will be applied.`);
+  }
+  const semi = Math.abs(keyDistanceSemitones(keyA, keyB));
+  if (semi === 0) {
+    notes.push('Keys already match.');
+  } else if (semi <= 2 || semi === 5 || semi === 7) {
+    score -= semi * 3;
+    notes.push(`Keys are related (±${semi} semitones) — Auto Harmonic Match recommended.`);
+  } else {
+    score -= 15 + semi * 2;
+    notes.push(`Keys differ by ${semi} semitones — pitch shift may color vocals.`);
+  }
+  return { score: Math.max(5, Math.round(score)), notes };
+}
