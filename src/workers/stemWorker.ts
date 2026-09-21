@@ -204,8 +204,9 @@ self.onmessage = (ev: MessageEvent) => {
         const harm = 0.5 * (hpL.h[i] + hpR.h[i]);
         const perc = 0.5 * (hpL.p[i] + hpR.p[i]);
         const tot = harm + perc + 1e-9;
-        let v = center * (harm / tot);
-        let d = perc / tot * (1 - center * 0.35);
+        // Emphasize center for vocals; reduce center bleed into drums/other
+        let v = Math.min(1, center * 1.45) * (harm / tot);
+        let d = perc / tot * (1 - center * 0.55);
         let b = k < bassBin ? (harm / tot) * 0.85 : 0;
         let o = Math.max(0, 1 - v - d - b);
         const s = v + d + b + o + 1e-12;
@@ -220,8 +221,9 @@ self.onmessage = (ev: MessageEvent) => {
     const other = applyMask(stL.mag, stR.mag, stL.phase, stR.phase, oMask, n);
     const instL = new Float32Array(n), instR = new Float32Array(n);
     for (let i = 0; i < n; i++) {
-      instL[i] = drums.L[i] + bass.L[i] + other.L[i];
-      instR[i] = drums.R[i] + bass.R[i] + other.R[i];
+      // Soft duck residual center vocals from the instrumental bed
+      instL[i] = drums.L[i] + bass.L[i] + other.L[i] - vocals.L[i] * 0.25;
+      instR[i] = drums.R[i] + bass.R[i] + other.R[i] - vocals.R[i] * 0.25;
     }
     peakNorm([vocals.L, vocals.R]); peakNorm([drums.L, drums.R]);
     peakNorm([bass.L, bass.R]); peakNorm([other.L, other.R]); peakNorm([instL, instR]);
