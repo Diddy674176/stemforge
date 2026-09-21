@@ -1,1 +1,155 @@
-PLACEHOLDER_LOAD_FROM_/tmp/exact_p02.txt
+      muted: false,
+        gain: 1,
+        pitchSemitones: pitch,
+        rate,
+      };
+      setProject((p) => ({ ...p, clips: [...p.clips, clip], selectedClipId: clip.id }));
+      setStatus(`Added ${stem.name} to timeline (rate ${rate.toFixed(3)}, pitch ${pitch >= 0 ? '+' : ''}${pitch}).`);
+    },
+    [project, playhead],
+  );
+
+  const moveClip = useCallback((clipId: string, startSec: number) => {
+    setProject((p) => ({
+      ...p,
+      clips: p.clips.map((c) =>
+        c.id === clipId
+          ? { ...c, startSec: snapTime(startSec, p.bpm, p.snap) }
+          : c,
+      ),
+    }));
+  }, []);
+
+  const splitClip = useCallback((clipId: string, atSec: number) => {
+    setProject((p) => {
+      const clip = p.clips.find((c) => c.id === clipId);
+      if (!clip) return p;
+      const local = atSec - clip.startSec;
+      if (local <= 0.05 || local >= clip.durationSec - 0.05) return p;
+      const a: TimelineClip = {
+        ...clip,
+        durationSec: local,
+        fadeOutSec: 0.02,
+      };
+      const b: TimelineClip = {
+        ...clip,
+        id: uid('clip'),
+        startSec: atSec,
+        offsetSec: clip.offsetSec + local * clip.rate,
+        durationSec: clip.durationSec - local,
+        fadeInSec: 0.02,
+      };
+      return {
+        ...p,
+        clips: p.clips.flatMap((c) => (c.id === clipId ? [a, b] : [c])),
+      };
+    });
+  }, []);
+
+  const deleteClip = useCallback((clipId: string) => {
+    setProject((p) => ({
+      ...p,
+      clips: p.clips.filter((c) => c.id !== clipId),
+      selectedClipId: p.selectedClipId === clipId ? null : p.selectedClipId,
+    }));
+  }, []);
+
+  const setBpm = useCallback((bpm: number) => {
+    setProject((p) => {
+      const next = { ...p, bpm };
+      // Retarget clip rates
+      next.clips = p.clips.map((c) => {
+        const src = p.sources.find((s) => s.id === c.sourceId);
+        const rate = src?.bpm ? bpm / src.bpm : c.rate;
+        return { ...c, rate };
+      });
+      return next;
+    });
+  }, []);
+
+  const setKey = useCallback((key: string) => {
+    setProject((p) => {
+      const next = { ...p, key };
+      if (p.autoHarmonicMatch) {
+        next.clips = p.clips.map((c) => {
+          const src = p.sources.find((s) => s.id === c.sourceId);
+          const pitch = src?.key ? keyDistanceSemitones(src.key, key) : 0;
+          return { ...c, pitchSemitones: pitch };
+        });
+      }
+      return next;
+    });
+  }, []);
+
+  const applyMasterPreset = useCallback((preset: MasterPresetId) => {
+    setProject((p) => ({
+      ...p,
+      master: { ...p.master, ...MASTER_PRESETS[preset], preset },
+    }));
+    engine.setMaster({ ...project.master, ...MASTER_PRESETS[preset], preset });
+  }, [project.master]);
+
+  /** Beat bed: prefer instrumental (drums+bass+other); never beat vocals. */
+  const pickBeatBed = (beatSrc: AudioSource): StemTrack[] => {
+    const instrumental = beatSrc.stems.find(
+      (s) => s.kind === 'instrumental' && s.buffer,
+    );
+    if (instrumental) return [instrumental];
+    const parts: StemKind[] = ['drums', 'bass', 'other'];
+    return parts
+      .map((k) => beatSrc.stems.find((s) => s.kind === k && s.buffer))
+      .filter((s): s is StemTrack => Boolean(s));
+  };
+
+  /** Cheap RMS from buffer (subsampled) for mashup auto-gain. */
+  const bufferRms = (buf: AudioBuffer | null): number => {
+    if (!buf) return 0.1;
+    const ch = buf.getChannelData(0);
+    const step = Math.max(1, Math.floor(ch.length / 40000));
+    let sum = 0;
+    let n = 0;
+    for (let i = 0; i < ch.length; i += step) {
+      const s = ch[i];
+      sum += s * s;
+      n++;
+    }
+    return Math.sqrt(sum / Math.max(1, n)) + 1e-6;
+  };
+
+  const bufferPeak = (buf: AudioBuffer | null): number => {
+    if (!buf) return 1;
+    const ch = buf.getChannelData(0);
+    const step = Math.max(1, Math.floor(ch.length / 40000));
+    let mx = 1e-6;
+    for (let i = 0; i < ch.length; i += step) {
+      const a = Math.abs(ch[i]);
+      if (a > mx) mx = a;
+    }
+    return mx;
+  };
+
+  /**
+   * Voice-forward auto-balance.
+   * Vocals ≈ 1.0–1.15; instrumental/bed ≈ 0.45–0.60 so lyrics sit ~6–9 dB above the beat.
+   * voiceBalance: 0 = more beat, 1 = more voice (default 0.72 voice-forward).
+   */
+  const computeMashupGains = (
+    vocalStem: StemTrack,
+    bedStems: StemTrack[],
+    voiceBalance = 0.72,
+  ): { vocals: number; bed: number; targetDb: number } => {
+    const bal = Math.min(1, Math.max(0, voiceBalance));
+    const targetDb = 6 + bal * 3; // 6–9 dB
+    const vRms = bufferRms(vocalStem.buffer);
+    let bedRms = 0;
+    for (const b of bedStems) bedRms += bufferRms(b.buffer);
+    bedRms /= Math.max(1, bedStems.length);
+
+    let vVol = 1.08;
+    const peak = bufferPeak(vocalStem.buffer);
+    if (peak < 0.85) vVol = Math.min(1.15, 1.08 * (0.92 / Math.max(peak, 0.15)));
+    vVol = Math.min(1.15, Math.max(1.0, vVol));
+
+    const ratio = Math.pow(10, targetDb / 20);
+    let bedVol = (vRms * vVol) / (bedRms * ratio);
+    // Clamp to voice-forward bed range; tilt slightly with b
