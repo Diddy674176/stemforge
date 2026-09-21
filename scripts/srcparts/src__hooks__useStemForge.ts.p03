@@ -1,30 +1,96 @@
-       if (stem.kind === 'bass') stem.volume = 0.75;
-        if (stem.kind === 'melody' || stem.kind === 'other') stem.volume = 0.65;
+from voice song)
+      const vStem = vocalsSrc.stems.find((s) => s.kind === 'vocals' && s.buffer);
+      if (!vStem) {
+        setStatus('Wait until stem separation finishes');
+        return;
       }
 
-      setProject((p) => ({
-        ...p,
-        bpm: targetBpm,
-        key: targetKey,
-        clips,
-        updatedAt: Date.now(),
-      }));
-      setBusy(false);
-      setStatus(
-        `Auto-synced @ ${targetBpm} BPM / ${targetKey}. Preview ready — press Play.`,
-      );
-      syncEngine({
+      // Beat song → instrumental bed (NOT beat vocals). Never stems[0] fallback.
+      const beatBed = pickBeatBed(beatSrc);
+      if (beatBed.length === 0) {
+        setStatus('Wait until stem separation finishes');
+        return;
+      }
+
+      // Optional melody only from an explicit third source (never voice instrumental)
+      let mStem: StemTrack | null = null;
+      if (
+        melodySrc &&
+        melodySrc.id !== vocalsSrc.id &&
+        melodySrc.id !== beatSrc.id
+      ) {
+        mStem =
+          melodySrc.stems.find(
+            (s) => (s.kind === 'melody' || s.kind === 'other') && s.buffer,
+          ) ?? null;
+      }
+
+      setBusy(true);
+      setStatus('AUTO SYNC: matching tempo + key, building mashup…');
+      const targetBpm = beatSrc.bpm ?? project.bpm;
+      const targetKey = vocalsSrc.key ?? project.key;
+
+      const usedStemIds = new Set<string>();
+      const clips: TimelineClip[] = [];
+      let track = 0;
+
+      const make = (stem: StemTrack, src: AudioSource) => {
+        const rate = src.bpm ? targetBpm / src.bpm : 1;
+        const pitch =
+          project.autoHarmonicMatch && src.key
+            ? keyDistanceSemitones(src.key, targetKey)
+            : 0;
+        usedStemIds.add(stem.id);
+        clips.push({
+          id: uid('clip'),
+          stemId: stem.id,
+          sourceId: stem.sourceId,
+          trackIndex: track++,
+          startSec: 0,
+          offsetSec: 0,
+          durationSec: stem.duration / rate,
+          fadeInSec: 0.02,
+          fadeOutSec: 0.08,
+          muted: false,
+          gain: 1,
+          pitchSemitones: pitch,
+          rate,
+        });
+      };
+
+      // Clear previous clips by rebuilding from scratch
+      for (const bp of beatBed) make(bp, beatSrc);
+      make(vStem, vocalsSrc);
+      if (mStem && melodySrc) make(mStem, melodySrc);
+
+      const involved = new Set<string>([vocalsSrc.id, beatSrc.id]);
+      if (melodySrc && mStem) involved.add(melodySrc.id);
+
+      const nextSources = applyMashupMute(project.sources, usedStemIds, involved);
+      const next: ProjectState = {
         ...project,
         bpm: targetBpm,
         key: targetKey,
         clips,
-      });
+        sources: nextSources,
+        updatedAt: Date.now(),
+      };
+
+      // Sync engine with the NEW project state (avoid stale closure)
+      setProject(next);
+      syncEngine(next);
+      setBusy(false);
+      setStatus(
+        `Playing vocals from ${vocalsSrc.name} over instrumental from ${beatSrc.name}`,
+      );
     },
     [project, syncEngine],
   );
 
   const runSmartRemix = useCallback(() => {
-    const separated = project.sources.filter((s) => s.stems.length > 0);
+    const separated = project.sources.filter(
+      (s) => s.status === 'separated' && s.stems.some((st) => Boolean(st.buffer)),
+    );
     if (separated.length < 2) {
       setStatus('Import & separate at least 2 songs for Smart Remix.');
       return;
@@ -41,107 +107,47 @@
           B.bpm ?? 120,
           B.key ?? 'C major',
         );
-        const v = A.stems.find((s) => s.kind === 'vocals');
-        const d = B.stems.find((s) => s.kind === 'drums');
-        const b = B.stems.find((s) => s.kind === 'bass');
-        const m = B.stems.find((s) => s.kind === 'other' || s.kind === 'melody');
-        if (!v || !d) continue;
+        const v = A.stems.find((s) => s.kind === 'vocals' && s.buffer);
+        if (!v) continue;
+        const bed = pickBeatBed(B);
+        if (bed.length === 0) continue;
+        const assignments: RemixProposal['assignments'] = [
+          ...bed.map((st) => ({
+            role: st.kind as StemKind,
+            sourceId: B.id,
+            stemId: st.id,
+          })),
+          { role: 'vocals' as StemKind, sourceId: A.id, stemId: v.id },
+        ];
         props.push({
           id: uid('remix'),
           title: `Vocals ${A.name} + Beat ${B.name}`,
           score,
-          notes,
-          assignments: [
-            { role: 'vocals', sourceId: A.id, stemId: v.id },
-            { role: 'drums', sourceId: B.id, stemId: d.id },
-            ...(b ? [{ role: 'bass' as StemKind, sourceId: B.id, stemId: b.id }] : []),
-            ...(m ? [{ role: 'melody' as StemKind, sourceId: B.id, stemId: m.id }] : []),
+          notes: [
+            ...notes,
+            'Mashup: vocals-only over instrumental (no beat vocals).',
           ],
+          assignments,
         });
       }
     }
     props.sort((a, b) => b.score - a.score);
     const top = props.slice(0, 3);
-    // Add a mixed third if possible
+    // Optional third: vocals from A + instrumental from C (not layered full songs)
     if (separated.length >= 3 && top.length >= 2) {
+      const voiceSrc = separated[0];
       const C = separated[2];
-      const base = top[0];
-      const v = base.assignments.find((a) => a.role === 'vocals');
-      const d = C.stems.find((s) => s.kind === 'drums');
-      const mel = separated[1].stems.find((s) => s.kind === 'other');
-      if (v && d) {
+      const v = voiceSrc.stems.find((s) => s.kind === 'vocals' && s.buffer);
+      const bed = pickBeatBed(C);
+      if (v && bed.length > 0) {
         const { score, notes } = compatibilityScore(
-          separated[0].bpm ?? 120,
-          separated[0].key ?? 'C',
+          voiceSrc.bpm ?? 120,
+          voiceSrc.key ?? 'C',
           C.bpm ?? 120,
           C.key ?? 'C',
         );
         top[2] = {
           id: uid('remix'),
-          title: `Layered: ${separated[0].name} vocals + ${C.name} drums`,
+          title: `Vocals ${voiceSrc.name} + Beat ${C.name}`,
           score: score - 5,
-          notes: [...notes, 'Experimental multi-source layering.'],
-          assignments: [
-            v,
-            { role: 'drums', sourceId: C.id, stemId: d.id },
-            ...(mel
-              ? [{ role: 'melody' as StemKind, sourceId: separated[1].id, stemId: mel.id }]
-              : []),
-          ],
-        };
-      }
-    }
-    setProposals(top.filter(Boolean).slice(0, 3));
-    setStatus(`Smart Remix proposed ${Math.min(3, top.length)} combinations.`);
-  }, [project.sources]);
-
-  const loadProposal = useCallback(
-    (prop: RemixProposal) => {
-      const clips: TimelineClip[] = [];
-      prop.assignments.forEach((a, idx) => {
-        const src = project.sources.find((s) => s.id === a.sourceId);
-        const stem = src?.stems.find((s) => s.id === a.stemId);
-        if (!src || !stem) return;
-        const rate = src.bpm ? project.bpm / src.bpm : 1;
-        const pitch =
-          project.autoHarmonicMatch && src.key
-            ? keyDistanceSemitones(src.key, project.key)
-            : 0;
-        clips.push({
-          id: uid('clip'),
-          stemId: stem.id,
-          sourceId: src.id,
-          trackIndex: idx,
-          startSec: 0,
-          offsetSec: 0,
-          durationSec: stem.duration / rate,
-          fadeInSec: 0.02,
-          fadeOutSec: 0.08,
-          muted: false,
-          gain: 1,
-          pitchSemitones: pitch,
-          rate,
-        });
-      });
-      setProject((p) => ({ ...p, clips }));
-      setStatus(`Loaded proposal: ${prop.title}`);
-    },
-    [project],
-  );
-
-  const exportMix = useCallback(
-    async (format: ExportFormat) => {
-      setBusy(true);
-      setStatus('Rendering mix…');
-      try {
-        const stemsById = new Map(allStems.map((s) => [s.id, s]));
-        const buffer = await renderMix({
-          sampleRate: 44100,
-          durationSec: Math.max(duration, 1),
-          clips: project.clips,
-          stemsById,
-          master: project.master,
-          onProgress: (p) => setStatus(`Rendering… ${Math.round(p * 100)}%`),
-        });
-        const blob = await exportBuffer(buffer, format);
-        downloadBlob(blob, `${project.name || 'stemforge-mix'}.${format}`)
+          notes: [...notes, 'Alternate beat bed from third source.'],
