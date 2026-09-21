@@ -19,6 +19,8 @@ interface Props {
   onVocals: (id: string) => void;
   onBeat: (id: string) => void;
   onMelody: (id: string) => void;
+  voiceBalance: number;
+  onVoiceBalance: (v: number) => void;
   onAutoSync: () => void;
   onSmartRemix: () => void;
   onLoadProposal: (p: RemixProposal) => void;
@@ -236,6 +238,24 @@ export function SimpleStudio(props: Props) {
                 Smart Remix
               </button>
             </div>
+            <label className="voice-beat-balance">
+              <span>Voice / Beat balance</span>
+              <div className="balance-row">
+                <span className="muted">Beat</span>
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  value={props.voiceBalance}
+                  disabled={props.busy}
+                  onChange={(e) => props.onVoiceBalance(Number(e.target.value))}
+                  aria-label="Voice versus beat balance"
+                />
+                <span className="muted">Voice</span>
+              </div>
+              <span className="muted balance-hint">Default is voice-forward so lyrics stay on top</span>
+            </label>
             {props.proposals.length > 0 && (
               <div className="proposal-list">
                 {props.proposals.map((p) => (
