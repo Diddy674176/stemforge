@@ -16,7 +16,7 @@ export function BeginnerMode(props: Props) {
   const opts = props.sources.filter((s) => s.stems.length > 0);
   return (
     <div className="beginner">
-      <h3>Beginner · AUTO SYNC</h3>
+      <h3>Auto Sync</h3>
       <p className="muted">Pick vocals + beat (+ optional melody). We match tempo &amp; key.</p>
       <label>
         Vocals source
