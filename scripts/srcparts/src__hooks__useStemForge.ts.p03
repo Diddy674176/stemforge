@@ -1,0 +1,148 @@
+       if (stem.kind === 'bass') stem.volume = 0.75;
+        if (stem.kind === 'melody' || stem.kind === 'other') stem.volume = 0.65;
+      }
+
+      setProject((p) => ({
+        ...p,
+        bpm: targetBpm,
+        key: targetKey,
+        clips,
+        beginnerMode: false,
+        updatedAt: Date.now(),
+      }));
+      setBusy(false);
+      setStatus(
+        `Auto-synced @ ${targetBpm} BPM / ${targetKey}. Preview ready — press Play.`,
+      );
+      syncEngine({
+        ...project,
+        bpm: targetBpm,
+        key: targetKey,
+        clips,
+      });
+    },
+    [project, syncEngine],
+  );
+
+  const runSmartRemix = useCallback(() => {
+    const separated = project.sources.filter((s) => s.stems.length > 0);
+    if (separated.length < 2) {
+      setStatus('Import & separate at least 2 songs for Smart Remix.');
+      return;
+    }
+    const props: RemixProposal[] = [];
+    for (let i = 0; i < separated.length; i++) {
+      for (let j = 0; j < separated.length; j++) {
+        if (i === j) continue;
+        const A = separated[i];
+        const B = separated[j];
+        const { score, notes } = compatibilityScore(
+          A.bpm ?? 120,
+          A.key ?? 'C major',
+          B.bpm ?? 120,
+          B.key ?? 'C major',
+        );
+        const v = A.stems.find((s) => s.kind === 'vocals');
+        const d = B.stems.find((s) => s.kind === 'drums');
+        const b = B.stems.find((s) => s.kind === 'bass');
+        const m = B.stems.find((s) => s.kind === 'other' || s.kind === 'melody');
+        if (!v || !d) continue;
+        props.push({
+          id: uid('remix'),
+          title: `Vocals ${A.name} + Beat ${B.name}`,
+          score,
+          notes,
+          assignments: [
+            { role: 'vocals', sourceId: A.id, stemId: v.id },
+            { role: 'drums', sourceId: B.id, stemId: d.id },
+            ...(b ? [{ role: 'bass' as StemKind, sourceId: B.id, stemId: b.id }] : []),
+            ...(m ? [{ role: 'melody' as StemKind, sourceId: B.id, stemId: m.id }] : []),
+          ],
+        });
+      }
+    }
+    props.sort((a, b) => b.score - a.score);
+    const top = props.slice(0, 3);
+    // Add a mixed third if possible
+    if (separated.length >= 3 && top.length >= 2) {
+      const C = separated[2];
+      const base = top[0];
+      const v = base.assignments.find((a) => a.role === 'vocals');
+      const d = C.stems.find((s) => s.kind === 'drums');
+      const mel = separated[1].stems.find((s) => s.kind === 'other');
+      if (v && d) {
+        const { score, notes } = compatibilityScore(
+          separated[0].bpm ?? 120,
+          separated[0].key ?? 'C',
+          C.bpm ?? 120,
+          C.key ?? 'C',
+        );
+        top[2] = {
+          id: uid('remix'),
+          title: `Layered: ${separated[0].name} vocals + ${C.name} drums`,
+          score: score - 5,
+          notes: [...notes, 'Experimental multi-source layering.'],
+          assignments: [
+            v,
+            { role: 'drums', sourceId: C.id, stemId: d.id },
+            ...(mel
+              ? [{ role: 'melody' as StemKind, sourceId: separated[1].id, stemId: mel.id }]
+              : []),
+          ],
+        };
+      }
+    }
+    setProposals(top.filter(Boolean).slice(0, 3));
+    setStatus(`Smart Remix proposed ${Math.min(3, top.length)} combinations.`);
+  }, [project.sources]);
+
+  const loadProposal = useCallback(
+    (prop: RemixProposal) => {
+      const clips: TimelineClip[] = [];
+      prop.assignments.forEach((a, idx) => {
+        const src = project.sources.find((s) => s.id === a.sourceId);
+        const stem = src?.stems.find((s) => s.id === a.stemId);
+        if (!src || !stem) return;
+        const rate = src.bpm ? project.bpm / src.bpm : 1;
+        const pitch =
+          project.autoHarmonicMatch && src.key
+            ? keyDistanceSemitones(src.key, project.key)
+            : 0;
+        clips.push({
+          id: uid('clip'),
+          stemId: stem.id,
+          sourceId: src.id,
+          trackIndex: idx,
+          startSec: 0,
+          offsetSec: 0,
+          durationSec: stem.duration / rate,
+          fadeInSec: 0.02,
+          fadeOutSec: 0.08,
+          muted: false,
+          gain: 1,
+          pitchSemitones: pitch,
+          rate,
+        });
+      });
+      setProject((p) => ({ ...p, clips, beginnerMode: false }));
+      setStatus(`Loaded proposal: ${prop.title}`);
+    },
+    [project],
+  );
+
+  const exportMix = useCallback(
+    async (format: ExportFormat) => {
+      setBusy(true);
+      setStatus('Rendering mix…');
+      try {
+        const stemsById = new Map(allStems.map((s) => [s.id, s]));
+        const buffer = await renderMix({
+          sampleRate: 44100,
+          durationSec: Math.max(duration, 1),
+          clips: project.clips,
+          stemsById,
+          master: project.master,
+          onProgress: (p) => setStatus(`Rendering… ${Math.round(p * 100)}%`),
+        });
+        const blob = await exportBuffer(buffer, format);
+        downloadBlob(blob, `${project.name || 'stemforge-mix'}.${format}`)
