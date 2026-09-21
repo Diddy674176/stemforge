@@ -18,18 +18,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Restore from chunks if needed
+      - name: Restore from legacy chunks if needed
         run: |
-          if [ ! -f package.json ] || [ ! -d src/audio ]; then
+          if [ ! -f package.json ]; then
             python3 scripts/restore-chunks.py
           else
-            echo "Source tree present"
+            echo "package.json present"
           fi
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
       - run: npm install
-      - run: node scripts/join-srcparts.mjs
+      - name: Join split source parts
+        run: node scripts/join-srcparts.mjs
       - run: npm run build
       - name: Publish dist to gh-pages
         uses: peaceiris/actions-gh-pages@v4

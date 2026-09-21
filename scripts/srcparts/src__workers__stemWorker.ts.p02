@@ -1,0 +1,54 @@
+ag, stR.mag, stL.phase, stR.phase, bMask);
+    const other = applyMask(stL.mag, stR.mag, stL.phase, stR.phase, oMask);
+
+    // Instrumental ≈ drums + bass + other
+    const instL = new Float32Array(n);
+    const instR = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      instL[i] = drums.L[i] + bass.L[i] + other.L[i];
+      instR[i] = drums.R[i] + bass.R[i] + other.R[i];
+    }
+
+    peakNormalize([vocals.L, vocals.R], 0.92);
+    peakNormalize([drums.L, drums.R], 0.92);
+    peakNormalize([bass.L, bass.R], 0.92);
+    peakNormalize([other.L, other.R], 0.92);
+    peakNormalize([instL, instR], 0.92);
+
+    post({ type: 'progress', jobId, progress: 0.95, message: 'Packing stems…' });
+
+    const v = packStem(vocals.L, vocals.R);
+    const d = packStem(drums.L, drums.R);
+    const b = packStem(bass.L, bass.R);
+    const o = packStem(other.L, other.R);
+    const ins = packStem(instL, instR);
+
+    const transfer: Transferable[] = [
+      v.left.buffer, v.right.buffer, v.peaks.buffer,
+      d.left.buffer, d.right.buffer, d.peaks.buffer,
+      b.left.buffer, b.right.buffer, b.peaks.buffer,
+      o.left.buffer, o.right.buffer, o.peaks.buffer,
+      ins.left.buffer, ins.right.buffer, ins.peaks.buffer,
+    ];
+
+    post(
+      {
+        type: 'done',
+        jobId,
+        progress: 1,
+        vocals: v,
+        drums: d,
+        bass: b,
+        other: o,
+        instrumental: ins,
+      },
+      transfer,
+    );
+  } catch (err) {
+    post({
+      type: 'error',
+      jobId,
+      message: err instanceof Error ? err.message : String(err),
+    });
+  }
+};
