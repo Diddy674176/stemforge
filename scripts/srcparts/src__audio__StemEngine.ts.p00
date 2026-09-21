@@ -1,0 +1,169 @@
+/**
+ * Multitrack live playback engine using Web Audio + SoundTouch for tempo/pitch.
+ */
+import { SoundTouchNode } from '@soundtouchjs/audio-worklet';
+import processorUrl from '@soundtouchjs/audio-worklet/processor?url';
+import type { MasterSettings, StemFx, StemTrack, TimelineClip } from './types';
+import { createReverbIR } from './reverbIR';
+import { dbToGain, clamp } from './dsp';
+
+type Listener = () => void;
+
+interface TrackGraph {
+  stemId: string;
+  source: AudioBufferSourceNode | null;
+  stNode: SoundTouchNode | null;
+  gain: GainNode;
+  pan: StereoPannerNode;
+  highPass: BiquadFilterNode;
+  lowPass: BiquadFilterNode;
+  eq: BiquadFilterNode[];
+  comp: DynamicsCompressorNode;
+  delay: DelayNode;
+  delayFb: GainNode;
+  delayWet: GainNode;
+  reverbWet: GainNode;
+  lofi: BiquadFilterNode;
+  filter: BiquadFilterNode;
+  input: GainNode;
+  output: GainNode;
+}
+
+export class StemEngine {
+  ctx: AudioContext | null = null;
+  private workletReady: Promise<void> | null = null;
+  private masterGain!: GainNode;
+  private masterComp!: DynamicsCompressorNode;
+  private masterLim!: DynamicsCompressorNode;
+  private masterWarm!: BiquadFilterNode;
+  private masterBright!: BiquadFilterNode;
+  private analyser!: AnalyserNode;
+  private convolver!: ConvolverNode;
+  private metroGain!: GainNode;
+  private graphBuilt = false;
+
+  private tracks = new Map<string, TrackGraph>();
+  private playing = false;
+  private startedAt = 0;
+  private offset = 0;
+  private listeners = new Set<Listener>();
+  private clips: TimelineClip[] = [];
+  private stems = new Map<string, StemTrack>();
+  private master: MasterSettings | null = null;
+  private activeSources: AudioBufferSourceNode[] = [];
+  private metronomeOn = false;
+  private bpm = 120;
+  private raf = 0;
+
+  async ensure(): Promise<AudioContext> {
+    if (!this.ctx) {
+      this.ctx = new AudioContext();
+      this.buildMaster(this.ctx);
+    }
+    if (this.ctx.state === 'suspended') await this.ctx.resume();
+    await this.ensureWorklet(this.ctx);
+    return this.ctx;
+  }
+
+  private ensureWorklet(ctx: AudioContext): Promise<void> {
+    if (!this.workletReady) {
+      this.workletReady = SoundTouchNode.register(ctx, processorUrl).catch((e) => {
+        this.workletReady = null;
+        throw e;
+      });
+    }
+    return this.workletReady;
+  }
+
+  private buildMaster(ctx: AudioContext) {
+    this.masterGain = ctx.createGain();
+    this.masterWarm = ctx.createBiquadFilter();
+    this.masterWarm.type = 'lowshelf';
+    this.masterWarm.frequency.value = 180;
+    this.masterBright = ctx.createBiquadFilter();
+    this.masterBright.type = 'highshelf';
+    this.masterBright.frequency.value = 6000;
+    this.masterComp = ctx.createDynamicsCompressor();
+    this.masterLim = ctx.createDynamicsCompressor();
+    this.masterLim.threshold.value = -1.2;
+    this.masterLim.knee.value = 0;
+    this.masterLim.ratio.value = 20;
+    this.masterLim.attack.value = 0.002;
+    this.masterLim.release.value = 0.05;
+    this.convolver = ctx.createConvolver();
+    this.convolver.buffer = createReverbIR(ctx);
+    this.analyser = ctx.createAnalyser();
+    this.analyser.fftSize = 2048;
+    this.metroGain = ctx.createGain();
+    this.metroGain.gain.value = 0;
+
+    this.masterGain
+      .connect(this.masterWarm)
+      .connect(this.masterBright)
+      .connect(this.masterComp)
+      .connect(this.masterLim)
+      .connect(this.analyser)
+      .connect(ctx.destination);
+
+    this.metroGain.connect(ctx.destination);
+    this.graphBuilt = true;
+  }
+
+  subscribe(fn: Listener): () => void {
+    this.listeners.add(fn);
+    return () => this.listeners.delete(fn);
+  }
+
+  private emit() {
+    for (const l of this.listeners) l();
+  }
+
+  getAnalyser(): AnalyserNode | null {
+    return this.analyser ?? null;
+  }
+
+  isPlaying(): boolean {
+    return this.playing;
+  }
+
+  getPlayhead(): number {
+    if (!this.ctx || !this.playing) return this.offset;
+    return this.offset + (this.ctx.currentTime - this.startedAt);
+  }
+
+  setMaster(m: MasterSettings) {
+    this.master = m;
+    if (!this.graphBuilt) return;
+    this.masterGain.gain.value = dbToGain(m.gainDb);
+    this.masterWarm.gain.value = m.warmth * 4;
+    this.masterBright.gain.value = m.brightness * 4;
+    this.masterComp.threshold.value =
+      m.preset === 'loud' ? -16 : m.preset === 'streaming' ? -12 : -22;
+    this.masterComp.ratio.value = m.preset === 'loud' ? 6 : m.compressor ? 3 : 1;
+  }
+
+  setMetronome(on: boolean, bpm: number) {
+    this.metronomeOn = on;
+    this.bpm = bpm;
+  }
+
+  syncProject(
+    clips: TimelineClip[],
+    stems: StemTrack[],
+    master: MasterSettings,
+    bpm: number,
+  ) {
+    this.clips = clips;
+    this.stems = new Map(stems.map((s) => [s.id, s]));
+    this.bpm = bpm;
+    this.setMaster(master);
+  }
+
+  private anySolo(): boolean {
+    for (const s of this.stems.values()) if (s.solo) return true;
+    return false;
+  }
+
+  private stemAudible(stem: StemTrack): boolean {
+    if (stem.muted) return false;
+    if (this.anySolo() && !stem.solo) return fals
