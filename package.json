@@ -1,0 +1,31 @@
+{
+  "name": "stemforge",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "lint": "oxlint",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@soundtouchjs/audio-worklet": "^2.1.1",
+    "idb": "^8.0.3",
+    "lamejs": "^1.2.1",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "vite-plugin-pwa": "^1.3.0",
+    "workbox-window": "^7.4.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.6",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
+    "@vitejs/plugin-react": "^6.1.1",
+    "oxlint": "^1.81.0",
+    "typescript": "~6.0.2",
+    "vite": "^8.3.0"
+  },
+  "description": "AI multi-track remix & stem studio"
+}
