@@ -18,12 +18,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Restore full source from chunks
-        run: python3 scripts/restore-chunks.py
+      - name: Restore from chunks if needed
+        run: |
+          if [ ! -f package.json ] || [ ! -d src/audio ]; then
+            python3 scripts/restore-chunks.py
+          else
+            echo "Source tree present"
+          fi
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
       - run: npm install
+      - run: node scripts/join-srcparts.mjs
       - run: npm run build
       - name: Publish dist to gh-pages
         uses: peaceiris/actions-gh-pages@v4
@@ -39,17 +45,10 @@ jobs:
             const source = { branch: 'gh-pages', path: '/' };
             try {
               await github.request('POST /repos/{owner}/{repo}/pages', { owner, repo, source });
-              core.info('Pages site created (gh-pages)');
             } catch (e) {
               const status = e.status || e.response?.status;
               if (status === 409 || status === 422) {
-                try {
-                  await github.request('PUT /repos/{owner}/{repo}/pages', { owner, repo, source });
-                  core.info('Pages site updated to gh-pages');
-                } catch (e2) {
-                  core.warning(String(e2));
-                }
-              } else {
-                core.warning(String(e));
-              }
+                try { await github.request('PUT /repos/{owner}/{repo}/pages', { owner, repo, source }); }
+                catch (e2) { core.warning(String(e2)); }
+              } else { core.warning(String(e)); }
             }
