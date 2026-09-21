@@ -58,10 +58,6 @@
         </label>
       </div>
 
-      <div className="coming">
-        <h4>Coming soon</h4>
-        <p className="muted">Automation lanes · NLP assistant · Drum fills library</p>
-      </div>
     </aside>
   );
 }
