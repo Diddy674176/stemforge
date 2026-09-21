@@ -1,0 +1,153 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type {
+  AudioSource,
+  MasterPresetId,
+  MasterSettings,
+  ProjectState,
+  RemixProposal,
+  StemKind,
+  StemTrack,
+  TimelineClip,
+} from '../audio/types';
+import { defaultMaster, defaultStemFx, STEM_COLORS, uid } from '../audio/types';
+import { analyzeBuffer, compatibilityScore, keyDistanceSemitones } from '../audio/analysis';
+import { separateStems, separateStemsFallback } from '../audio/separate';
+import { computePeaks, mixdownMono } from '../audio/dsp';
+import { engine } from '../audio/StemEngine';
+import {
+  downloadBlob,
+  exportBuffer,
+  renderMix,
+  type ExportFormat,
+} from '../audio/exportAudio';
+import {
+  audioBufferToPcm,
+  deleteProject,
+  listProjects,
+  loadProject,
+  pcmToAudioBuffer,
+  saveProjectRecord,
+  type SavedAudioBlob,
+  type SavedProjectMeta,
+} from '../db/indexedDb';
+
+function emptyProject(): ProjectState {
+  const now = Date.now();
+  return {
+    id: uid('proj'),
+    name: 'Untitled Remix',
+    createdAt: now,
+    updatedAt: now,
+    bpm: 120,
+    key: 'C minor',
+    autoHarmonicMatch: true,
+    snap: 'beat',
+    zoom: 40,
+    loop: false,
+    loopStart: 0,
+    loopEnd: 16,
+    metronome: false,
+    beginnerMode: true,
+    master: defaultMaster(),
+    sources: [],
+    clips: [],
+    selectedStemId: null,
+    selectedClipId: null,
+    playheadSec: 0,
+  };
+}
+
+async function decodeFile(file: File): Promise<AudioBuffer> {
+  const ctx = new AudioContext();
+  try {
+    const ab = await file.arrayBuffer();
+    return await ctx.decodeAudioData(ab.slice(0));
+  } finally {
+    await ctx.close().catch(() => undefined);
+  }
+}
+
+const MASTER_PRESETS: Record<MasterPresetId, Partial<MasterSettings>> = {
+  none: { gainDb: 0, compressor: false, limiter: false, warmth: 0, brightness: 0 },
+  balanced: { gainDb: 0, compressor: true, limiter: true, warmth: 0.2, brightness: 0.15 },
+  loud: { gainDb: 2, compressor: true, limiter: true, warmth: 0.1, brightness: 0.25 },
+  warm: { gainDb: 0, compressor: true, limiter: true, warmth: 0.55, brightness: 0.05 },
+  clean: { gainDb: 0, compressor: true, limiter: true, warmth: 0.05, brightness: 0.2 },
+  'bass-heavy': { gainDb: 1, compressor: true, limiter: true, warmth: 0.45, brightness: 0.05 },
+  bright: { gainDb: 0, compressor: true, limiter: true, warmth: 0.05, brightness: 0.5 },
+  streaming: { gainDb: 1.5, compressor: true, limiter: true, warmth: 0.15, brightness: 0.2 },
+};
+
+export function useStemForge() {
+  const [project, setProject] = useState<ProjectState>(emptyProject);
+  const [playing, setPlaying] = useState(false);
+  const [playhead, setPlayhead] = useState(0);
+  const [status, setStatus] = useState('Ready — import audio you own or have rights to remix.');
+  const [busy, setBusy] = useState(false);
+  const [savedList, setSavedList] = useState<SavedProjectMeta[]>([]);
+  const [proposals, setProposals] = useState<RemixProposal[]>([]);
+  const [rightsAccepted, setRightsAccepted] = useState(false);
+  const history = useRef<ProjectState[]>([]);
+  const future = useRef<ProjectState[]>([]);
+
+  useEffect(() => {
+    return engine.subscribe(() => {
+      setPlaying(engine.isPlaying());
+      setPlayhead(engine.getPlayhead());
+    });
+  }, []);
+
+  useEffect(() => {
+    listProjects().then(setSavedList).catch(() => undefined);
+  }, []);
+
+  const pushHistory = useCallback((next: ProjectState) => {
+    history.current.push(structuredClone({ ...project, sources: project.sources, clips: project.clips }));
+    if (history.current.length > 40) history.current.shift();
+    future.current = [];
+    setProject(next);
+  }, [project]);
+
+  const allStems = useMemo(
+    () => project.sources.flatMap((s) => s.stems),
+    [project.sources],
+  );
+
+  const syncEngine = useCallback(
+    (p: ProjectState = project) => {
+      engine.syncProject(p.clips, p.sources.flatMap((s) => s.stems), p.master, p.bpm);
+      engine.setMetronome(p.metronome, p.bpm);
+    },
+    [project],
+  );
+
+  const importFiles = useCallback(
+    async (files: FileList | File[]) => {
+      if (!rightsAccepted) {
+        setStatus('Accept the rights notice before importing.');
+        return;
+      }
+      setBusy(true);
+      const list = Array.from(files);
+      for (const file of list) {
+        try {
+          setStatus(`Decoding ${file.name}…`);
+          const buffer = await decodeFile(file);
+          const L = buffer.getChannelData(0);
+          const R = buffer.numberOfChannels > 1 ? buffer.getChannelData(1) : null;
+          const peaks = computePeaks(mixdownMono(L, R));
+          const source: AudioSource = {
+            id: uid('src'),
+            name: file.name.replace(/\.[^.]+$/, ''),
+            fileName: file.name,
+            duration: buffer.duration,
+            sampleRate: buffer.sampleRate,
+            bpm: null,
+            key: null,
+            structure: [],
+            peaks,
+            buffer,
+            stems: [],
+            separating: false,
+            analyzeProgress: 0,
+            status: 'i
