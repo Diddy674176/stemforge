@@ -1,0 +1,166 @@
+import type { StemKind, StemTrack } from './types';
+import { STEM_COLORS, defaultStemFx, uid } from './types';
+import { computePeaks, mixdownMono } from './dsp';
+
+export interface SeparateProgress {
+  progress: number;
+  message: string;
+}
+
+function channelsToBuffer(
+  ctx: AudioContext | OfflineAudioContext,
+  left: Float32Array,
+  right: Float32Array,
+  sampleRate: number,
+): AudioBuffer {
+  const buf = ctx.createBuffer(2, left.length, sampleRate);
+  buf.getChannelData(0).set(left);
+  buf.getChannelData(1).set(right);
+  return buf;
+}
+
+function makeStem(
+  sourceId: string,
+  kind: StemKind,
+  buffer: AudioBuffer,
+  peaks: Float32Array,
+): StemTrack {
+  return {
+    id: uid('stem'),
+    sourceId,
+    kind,
+    name: kind.charAt(0).toUpperCase() + kind.slice(1),
+    peaks,
+    duration: buffer.duration,
+    sampleRate: buffer.sampleRate,
+    buffer,
+    muted: false,
+    solo: false,
+    volume: kind === 'vocals' ? 0.9 : kind === 'drums' ? 0.85 : 0.8,
+    pan: 0,
+    gainDb: 0,
+    pitchSemitones: 0,
+    tempoRatio: 1,
+    fx: defaultStemFx(),
+    color: STEM_COLORS[kind],
+  };
+}
+
+/** Run 4-stem separation in a worker. */
+export async function separateStems(
+  sourceId: string,
+  buffer: AudioBuffer,
+  onProgress?: (p: SeparateProgress) => void,
+): Promise<StemTrack[]> {
+  const ctx = new AudioContext({ sampleRate: buffer.sampleRate });
+  try {
+    const L = buffer.getChannelData(0);
+    const R =
+      buffer.numberOfChannels > 1
+        ? buffer.getChannelData(1)
+        : buffer.getChannelData(0);
+
+    // Downsample-ish: for very long files, process at most ~6 min for Pages perf
+    let left = new Float32Array(L);
+    let right = new Float32Array(R);
+    const maxSamples = buffer.sampleRate * 360;
+    if (left.length > maxSamples) {
+      left = left.subarray(0, maxSamples);
+      right = right.subarray(0, maxSamples);
+      onProgress?.({
+        progress: 0.02,
+        message: 'Truncating to 6 min for in-browser separation…',
+      });
+    }
+
+    const jobId = uid('job');
+    const worker = new Worker(new URL('../workers/stemWorker.ts', import.meta.url), {
+      type: 'module',
+    });
+
+    const result = await new Promise<{
+      vocals: { left: Float32Array; right: Float32Array; peaks: Float32Array };
+      drums: { left: Float32Array; right: Float32Array; peaks: Float32Array };
+      bass: { left: Float32Array; right: Float32Array; peaks: Float32Array };
+      other: { left: Float32Array; right: Float32Array; peaks: Float32Array };
+      instrumental: { left: Float32Array; right: Float32Array; peaks: Float32Array };
+    }>((resolve, reject) => {
+      worker.onmessage = (ev) => {
+        const msg = ev.data;
+        if (msg.jobId !== jobId) return;
+        if (msg.type === 'progress') {
+          onProgress?.({ progress: msg.progress ?? 0, message: msg.message ?? '' });
+        } else if (msg.type === 'done') {
+          resolve(msg);
+          worker.terminate();
+        } else if (msg.type === 'error') {
+          reject(new Error(msg.message || 'Separation failed'));
+          worker.terminate();
+        }
+      };
+      worker.onerror = (e) => {
+        reject(e.error ?? new Error('Worker error'));
+        worker.terminate();
+      };
+      worker.postMessage(
+        {
+          type: 'separate',
+          jobId,
+          sampleRate: buffer.sampleRate,
+          left,
+          right,
+        },
+        [left.buffer, right.buffer],
+      );
+    });
+
+    const sr = buffer.sampleRate;
+    const kinds: { key: keyof typeof result; kind: StemKind }[] = [
+      { key: 'vocals', kind: 'vocals' },
+      { key: 'drums', kind: 'drums' },
+      { key: 'bass', kind: 'bass' },
+      { key: 'other', kind: 'other' },
+      { key: 'instrumental', kind: 'instrumental' },
+    ];
+
+    return kinds.map(({ key, kind }) => {
+      const ch = result[key];
+      const buf = channelsToBuffer(ctx, ch.left, ch.right, sr);
+      // Melody ≈ other (harmonic residual) alias
+      return makeStem(sourceId, kind, buf, ch.peaks);
+    });
+  } finally {
+    await ctx.close().catch(() => undefined);
+  }
+}
+
+/** Quick fallback if worker fails: band splits. */
+export async function separateStemsFallback(
+  sourceId: string,
+  buffer: AudioBuffer,
+): Promise<StemTrack[]> {
+  const ctx = new OfflineAudioContext(
+    2,
+    buffer.length,
+    buffer.sampleRate,
+  );
+  const L = buffer.getChannelData(0);
+  const R = buffer.numberOfChannels > 1 ? buffer.getChannelData(1) : L;
+  const n = L.length;
+  const midL = new Float32Array(n);
+  const midR = new Float32Array(n);
+  const sideL = new Float32Array(n);
+  const sideR = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const m = 0.5 * (L[i] + R[i]);
+    const s = 0.5 * (L[i] - R[i]);
+    midL[i] = m;
+    midR[i] = m;
+    sideL[i] = s;
+    sideR[i] = -s;
+  }
+  // Crude filters via offline biquad rendering would be heavy; use time-domain 1-pole
+  const bassL = new Float32Array(n);
+  const bassR = new Float32Array(n);
+  const drumsL = new Float32Array(n);
+  const drumsR = new Float
