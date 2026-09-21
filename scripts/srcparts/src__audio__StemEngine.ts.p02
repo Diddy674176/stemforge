@@ -1,0 +1,165 @@
+tSec);
+      if (remaining <= 0.01) continue;
+
+      const src = ctx.createBufferSource();
+      src.buffer = stem.buffer;
+
+      if (useStretch) {
+        try {
+          const tempo = clamp(stem.fx.halfTime ? clip.rate * 0.5 : clip.rate, 0.5, 2);
+          const st = new SoundTouchNode({ context: ctx, outputChannelCount: 2 });
+          st.playbackRate.value = tempo;
+          st.pitch.value = 1;
+          st.pitchSemitones.value = clip.pitchSemitones;
+          src.playbackRate.value = tempo;
+          src.connect(st);
+          st.connect(graph.input);
+          graph.stNode = st;
+        } catch {
+          src.playbackRate.value = clamp(
+            clip.rate * Math.pow(2, clip.pitchSemitones / 12) * (stem.fx.halfTime ? 0.5 : 1),
+            0.25,
+            4,
+          );
+          src.connect(graph.input);
+        }
+      } else {
+        src.connect(graph.input);
+      }
+
+      // Fades
+      const g0 = graph.gain.gain.value;
+      const localStart = Math.max(0, clip.startSec - this.offset);
+      const fadeIn = Math.max(0.005, clip.fadeInSec);
+      const fadeOut = Math.max(0.005, clip.fadeOutSec);
+      graph.gain.gain.setValueAtTime(0, ctx.currentTime + localStart);
+      graph.gain.gain.linearRampToValueAtTime(g0 || 0.001, ctx.currentTime + localStart + fadeIn);
+      const endLocal = localStart + remaining;
+      graph.gain.gain.setValueAtTime(g0, ctx.currentTime + Math.max(localStart + fadeIn, endLocal - fadeOut));
+      graph.gain.gain.linearRampToValueAtTime(0, ctx.currentTime + endLocal);
+
+      try {
+        src.start(when, offsetInto, remaining + 0.05);
+      } catch {
+        /* */
+      }
+      this.activeSources.push(src);
+      graph.source = src;
+    }
+
+    if (this.metronomeOn) this.scheduleMetronome(ctx);
+    this.tick();
+    this.emit();
+  }
+
+  private scheduleMetronome(ctx: AudioContext) {
+    const beat = 60 / this.bpm;
+    const startBeat = Math.ceil(this.offset / beat) * beat;
+    for (let t = startBeat; t < this.offset + 30; t += beat) {
+      const when = this.startedAt + (t - this.offset);
+      if (when < ctx.currentTime) continue;
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.frequency.value = Math.abs(t / beat - Math.round(t / beat)) < 0.01 && Math.round(t / beat) % 4 === 0 ? 1200 : 800;
+      g.gain.value = 0.0001;
+      g.gain.setValueAtTime(0.0001, when);
+      g.gain.exponentialRampToValueAtTime(0.15, when + 0.005);
+      g.gain.exponentialRampToValueAtTime(0.0001, when + 0.08);
+      osc.connect(g);
+      g.connect(this.metroGain);
+      this.metroGain.gain.value = 0.6;
+      osc.start(when);
+      osc.stop(when + 0.1);
+    }
+  }
+
+  private tick = () => {
+    if (!this.playing) return;
+    this.emit();
+    this.raf = requestAnimationFrame(this.tick);
+  };
+
+  async pause() {
+    this.offset = this.getPlayhead();
+    await this.stopSourcesOnly();
+    this.playing = false;
+    cancelAnimationFrame(this.raf);
+    this.emit();
+  }
+
+  async stop() {
+    this.offset = 0;
+    await this.stopSourcesOnly();
+    this.playing = false;
+    cancelAnimationFrame(this.raf);
+    this.emit();
+  }
+
+  async seek(sec: number) {
+    const was = this.playing;
+    this.offset = Math.max(0, sec);
+    if (was) await this.play();
+    else this.emit();
+  }
+
+  private async stopSourcesOnly() {
+    for (const s of this.activeSources) {
+      try {
+        s.stop();
+      } catch {
+        /* */
+      }
+      try {
+        s.disconnect();
+      } catch {
+        /* */
+      }
+    }
+    this.activeSources = [];
+    for (const g of this.tracks.values()) {
+      try {
+        g.output.disconnect();
+      } catch {
+        /* */
+      }
+    }
+    this.tracks.clear();
+  }
+
+  /** Preview a single stem buffer immediately. */
+  async previewStem(stem: StemTrack, pitch = 0, rate = 1) {
+    const ctx = await this.ensure();
+    await this.stopSourcesOnly();
+    if (!stem.buffer) return;
+    this.offset = 0;
+    this.startedAt = ctx.currentTime;
+    this.playing = true;
+    const graph = this.buildFxChain(ctx, stem);
+    this.tracks.set(stem.id, graph);
+    const src = ctx.createBufferSource();
+    src.buffer = stem.buffer;
+    if (Math.abs(pitch) > 0.01 || Math.abs(rate - 1) > 0.001) {
+      try {
+        const tempo = clamp(rate, 0.5, 2);
+        const st = new SoundTouchNode({ context: ctx, outputChannelCount: 2 });
+        st.playbackRate.value = tempo;
+        st.pitch.value = 1;
+        st.pitchSemitones.value = pitch;
+        src.playbackRate.value = tempo;
+        src.connect(st);
+        st.connect(graph.input);
+      } catch {
+        src.playbackRate.value = rate * Math.pow(2, pitch / 12);
+        src.connect(graph.input);
+      }
+    } else {
+      src.connect(graph.input);
+    }
+    src.start(0);
+    this.activeSources.push(src);
+    this.tick();
+    this.emit();
+  }
+}
+
+export const engine = new StemEngine();

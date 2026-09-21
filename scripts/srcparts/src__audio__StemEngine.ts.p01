@@ -1,0 +1,155 @@
+e;
+    return true;
+  }
+
+  private buildFxChain(ctx: AudioContext, stem: StemTrack): TrackGraph {
+    const input = ctx.createGain();
+    const highPass = ctx.createBiquadFilter();
+    highPass.type = 'highpass';
+    highPass.frequency.value = stem.fx.highPass;
+    const lowPass = ctx.createBiquadFilter();
+    lowPass.type = 'lowpass';
+    lowPass.frequency.value = stem.fx.lowPass;
+    const eq = stem.fx.eq.map((b) => {
+      const f = ctx.createBiquadFilter();
+      f.type = b.type;
+      f.frequency.value = b.freq;
+      f.Q.value = b.q;
+      f.gain.value = b.gain;
+      return f;
+    });
+    const comp = ctx.createDynamicsCompressor();
+    comp.threshold.value = stem.fx.compressor.threshold;
+    comp.ratio.value = stem.fx.compressor.enabled ? stem.fx.compressor.ratio : 1;
+    comp.attack.value = stem.fx.compressor.attack;
+    comp.release.value = stem.fx.compressor.release;
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = stem.fx.filter;
+    const lofi = ctx.createBiquadFilter();
+    lofi.type = 'lowpass';
+    lofi.frequency.value = stem.fx.lofi > 0 ? 3000 - stem.fx.lofi * 2500 : 20000;
+    const delay = ctx.createDelay(1.5);
+    delay.delayTime.value = 0.3;
+    const delayFb = ctx.createGain();
+    delayFb.gain.value = stem.fx.delayFeedback;
+    const delayWet = ctx.createGain();
+    delayWet.gain.value = stem.fx.delay;
+    const reverbWet = ctx.createGain();
+    reverbWet.gain.value = stem.fx.reverb;
+    const gain = ctx.createGain();
+    gain.gain.value = this.stemAudible(stem)
+      ? stem.volume * dbToGain(stem.gainDb)
+      : 0;
+    const pan = ctx.createStereoPanner();
+    pan.pan.value = stem.pan;
+    const output = ctx.createGain();
+
+    let node: AudioNode = input;
+    node.connect(highPass);
+    node = highPass;
+    node.connect(lowPass);
+    node = lowPass;
+    for (const f of eq) {
+      node.connect(f);
+      node = f;
+    }
+    node.connect(comp);
+    node = comp;
+    node.connect(filter);
+    node = filter;
+    node.connect(lofi);
+    node = lofi;
+    node.connect(gain);
+    gain.connect(pan);
+    pan.connect(output);
+
+    // Delay send
+    lofi.connect(delay);
+    delay.connect(delayFb);
+    delayFb.connect(delay);
+    delay.connect(delayWet);
+    delayWet.connect(output);
+
+    // Reverb send
+    lofi.connect(this.convolver);
+    // Actually connect via wet only — use separate path
+    const revTap = ctx.createGain();
+    revTap.gain.value = 1;
+    lofi.connect(revTap);
+    revTap.connect(reverbWet);
+    // Convolver shared: connect reverbWet through a local convolver copy? Use shared.
+    // Simpler: dry already in output; wet via shared convolver bus
+    const localConv = ctx.createConvolver();
+    localConv.buffer = this.convolver.buffer;
+    revTap.connect(localConv);
+    localConv.connect(reverbWet);
+    reverbWet.connect(output);
+
+    output.connect(this.masterGain);
+
+    return {
+      stemId: stem.id,
+      source: null,
+      stNode: null,
+      gain,
+      pan,
+      highPass,
+      lowPass,
+      eq,
+      comp,
+      delay,
+      delayFb,
+      delayWet,
+      reverbWet,
+      lofi,
+      filter,
+      input,
+      output,
+    };
+  }
+
+  updateStemLive(stem: StemTrack) {
+    const g = this.tracks.get(stem.id);
+    if (!g) return;
+    g.gain.gain.value = this.stemAudible(stem) ? stem.volume * dbToGain(stem.gainDb) : 0;
+    g.pan.pan.value = stem.pan;
+    g.highPass.frequency.value = stem.fx.highPass;
+    g.lowPass.frequency.value = stem.fx.lowPass;
+    g.filter.frequency.value = stem.fx.filter;
+    g.lofi.frequency.value = stem.fx.lofi > 0 ? 3000 - stem.fx.lofi * 2500 : 20000;
+    g.delayWet.gain.value = stem.fx.delay;
+    g.delayFb.gain.value = stem.fx.delayFeedback;
+    g.reverbWet.gain.value = stem.fx.reverb;
+    g.comp.ratio.value = stem.fx.compressor.enabled ? stem.fx.compressor.ratio : 1;
+    stem.fx.eq.forEach((b, i) => {
+      if (g.eq[i]) g.eq[i].gain.value = b.gain;
+    });
+  }
+
+  async play(fromSec?: number) {
+    const ctx = await this.ensure();
+    await this.stopSourcesOnly();
+    if (fromSec !== undefined) this.offset = Math.max(0, fromSec);
+    this.startedAt = ctx.currentTime;
+    this.playing = true;
+
+    const anySolo = this.anySolo();
+    for (const clip of this.clips) {
+      if (clip.muted) continue;
+      const stem = this.stems.get(clip.stemId);
+      if (!stem?.buffer) continue;
+      if (stem.muted) continue;
+      if (anySolo && !stem.solo) continue;
+
+      const graph = this.buildFxChain(ctx, stem);
+      this.tracks.set(stem.id + '_' + clip.id, graph);
+
+      const useStretch =
+        Math.abs(clip.rate - 1) > 0.001 || Math.abs(clip.pitchSemitones) > 0.01 || stem.fx.halfTime;
+
+      const when = this.startedAt + Math.max(0, clip.startSec - this.offset);
+      const offsetInto = Math.max(0, clip.offsetSec + Math.max(0, this.offset - clip.startSec));
+      if (clip.startSec + clip.durationSec <= this.offset) continue;
+
+      const remaining = clip.durationSec - Math.max(0, this.offset - clip.star
