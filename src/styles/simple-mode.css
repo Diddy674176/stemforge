@@ -138,3 +138,20 @@
   .step-strip li.active .step-label { display: inline; }
   .transport-btn { min-width: 96px; }
 }
+
+.voice-beat-balance {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+}
+.voice-beat-balance .balance-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.voice-beat-balance input[type="range"] {
+  flex: 1;
+  accent-color: var(--accent);
+}
+.balance-hint { font-size: 0.85em; }
